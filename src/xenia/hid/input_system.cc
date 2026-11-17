@@ -33,6 +33,7 @@ DEFINE_double(
     "Defines deadzone level for right stick. Allowed range [0.0-1.0].", "HID");
 
 InputSystem::InputSystem(xe::ui::Window* window) : window_(window) {
+  motion_capture_ = std::make_unique<motion::MotionCaptureSystem>();
 #ifdef XE_PLATFORM_WIN32
   portal_ = std::make_unique<HardwarePortal>();
 #endif  // XE_PLATFORM_WIN32

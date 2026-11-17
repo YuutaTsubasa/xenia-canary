@@ -7,5 +7,6 @@ if(_hid_demo AND _hid_srcs)
   list(REMOVE_ITEM _hid_srcs ${_hid_demo})
   set_target_properties(xenia-hid PROPERTIES SOURCES "${_hid_srcs}")
 endif()
-target_link_libraries(xenia-hid PUBLIC xenia-base xenia-hid-portal)
+target_link_libraries(xenia-hid PUBLIC xenia-base xenia-hid-portal
+                      xenia-hid-motion)
 xe_target_defaults(xenia-hid)

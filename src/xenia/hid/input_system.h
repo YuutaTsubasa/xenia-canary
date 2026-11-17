@@ -16,6 +16,7 @@
 #include "xenia/base/mutex.h"
 #include "xenia/hid/input.h"
 #include "xenia/hid/input_driver.h"
+#include "xenia/hid/motion/motion_capture.h"
 #include "xenia/hid/portal/portal.h"
 #include "xenia/xbox.h"
 
@@ -58,6 +59,11 @@ class InputSystem {
 
   Portal* GetPortal() { return portal_.get(); }
 
+  // Kinect-style camera input (docs/motion-capture.md).
+  motion::MotionCaptureSystem* GetMotionCapture() {
+    return motion_capture_.get();
+  }
+
   std::unique_lock<xe_unlikely_mutex> lock();
 
  private:
@@ -78,6 +84,8 @@ class InputSystem {
   std::vector<std::unique_ptr<InputDriver>> drivers_;
 
   std::unique_ptr<Portal> portal_;
+
+  std::unique_ptr<motion::MotionCaptureSystem> motion_capture_;
 
   std::bitset<XUserMaxUserCount> connected_slots = {};
   std::array<std::pair<joystick_value, joystick_value>, XUserMaxUserCount>
