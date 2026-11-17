@@ -8,6 +8,8 @@ add_library(xenia-hid-motion STATIC
   ${CMAKE_CURRENT_SOURCE_DIR}/depth_reprojection.cc
   ${CMAKE_CURRENT_SOURCE_DIR}/virtual_kinect_v1.h
   ${CMAKE_CURRENT_SOURCE_DIR}/virtual_kinect_v1.cc
+  ${CMAKE_CURRENT_SOURCE_DIR}/kinect_v2_frames.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/kinect_v2_frames.cc
 )
 target_link_libraries(xenia-hid-motion PUBLIC xenia-base)
 xe_target_defaults(xenia-hid-motion)
