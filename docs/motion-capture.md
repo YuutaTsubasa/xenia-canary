@@ -139,7 +139,9 @@ Plain host code, no guest types, unit-testable on every platform.
   `capabilities()`, `status()` (not found / driver missing / running, with a
   human-readable reason), `GetNewestFrame(SensorFrame&)`; optional
   `SetTilt(degrees)` and `GetTilt()`.
-- `MotionCaptureSystem`: owned by the emulator next to the input system.
+- `MotionCaptureSystem`: owned by `hid::InputSystem`, the way the Skylanders
+  portal (`hid/portal`) already is, so kernel code reaches it through
+  `emulator()->input_system()`.
   The cvar `motion_device = none | auto | kinect_v1 | kinect_v2 | webcam`
   (default `none`, so nothing changes for anyone who does not opt in) picks a
   backend; it opens on the title's first camera request and closes at
@@ -183,15 +185,18 @@ B (it gives one title skeletons and a depth-with-player-index image), so the
 
 ### Moves (generic)
 
+Rows marked **rewrite** are knuckleslee's code in Free Riders: Xenia gets a
+new implementation of the same job (see §6), not a port.
+
 | Free Riders file(s) | Becomes | Changes when ported |
 | --- | --- | --- |
-| `kinect_v2_win32.cpp` (device part) | Kinect v2 SDK 2.0 backend | Output a `SensorFrame` (mm depth + lens + colour + mapper) instead of the game image |
-| `kinect_v2_depth.{h,cpp}` (`KinectDepthView`, `kinect_v2_synthesize_depth`) | virtual v1 reprojection | Keep the reprojection; output millimetres at 640x480 instead of 320x240 depth-with-player-index (the title computes player index itself) |
-| `kinect_v2_image.cpp` | colour mapping to the v1 view | as is, minus preview sizes |
-| `kinect_sensor_win32.cpp` (device part) | Kinect v1 SDK 1.8 backend | `SensorFrame` output |
+| `kinect_v2_win32.cpp` (device part) | Kinect v2 SDK 2.0 backend, **rewrite** | Output a `SensorFrame` (mm depth + lens + colour + mapper) instead of the game image |
+| `kinect_v2_depth.{h,cpp}` (`KinectDepthView`, `kinect_v2_synthesize_depth`) | virtual v1 reprojection, **rewrite** | Keep the reprojection; output millimetres at 640x480 instead of 320x240 depth-with-player-index (the title computes player index itself) |
+| `kinect_v2_image.cpp` | colour mapping to the v1 view, **rewrite** | as is, minus preview sizes |
+| `kinect_sensor_win32.cpp` (device part) | Kinect v1 SDK 1.8 backend, **rewrite** | `SensorFrame` output |
 | `kinect_sensor_freenect.cpp`, `kinect_sensor_freenect2.cpp` | libfreenect backends (later) | `SensorFrame` output; the pose-on-colour part is not needed on path A |
-| `kinect_record_raw.cpp` | recording/replay of device frames for tests | file format kept |
-| `camera_capture.h`, `camera_capture_win32.cpp`, `_v4l2.cpp`, `_apple.mm`, `_android.cpp` | webcam capture | as is |
+| `kinect_record_raw.cpp` | recording/replay of device frames for tests, **rewrite** (own format) | file format kept |
+| `camera_capture.h`, `camera_capture_win32.cpp`, `_v4l2.cpp`, `_apple.mm`, `_android.cpp` | webcam capture | `_v4l2`, `_apple` port as is; `camera_capture.cpp`, `_win32`, `_android` are about half knuckleslee's lines: **rewrite** those |
 | `pose_estimator*`, `pose_mediapipe*`, `pose_skeleton*`, `pose_nui_joints.h`, `pose_smoothing*` | webcam pose -> 20-joint skeleton | as is |
 | `motion_input.{h,cpp}`, `motion_input_device.cpp` | ideas for `MotionCaptureSystem` (device choice, capabilities) | rewritten in Xenia style |
 
@@ -236,7 +241,24 @@ the Kinect v2 work — are **knuckleslee's code**. Options:
    work), giving up any chance of upstreaming.
 
 The user's own files (webcam, pose, freenect, motion input) can be relicensed
-by the user alone. Not decided here.
+by the user alone.
+
+**Decision (2026-11-17, YuutaTsubasa): option 2, rewrite.** The parts
+knuckleslee wrote in Free Riders Recompiled are written anew here, and are
+not ported. While writing them:
+
+- the sources are public documentation and permissively licensed code: the
+  Kinect for Windows SDK 1.8 / 2.0 reference (function names, struct
+  layouts, nominal camera constants such as the 285.63 px depth focal length
+  are interface facts), libfreenect / libfreenect2 (Apache-2.0, credited
+  where their math is followed) and the OpenKinect protocol notes;
+- knuckleslee's Free Riders files are not opened, and nothing is copied from
+  them (their design ideas described in this document, such as "reproject v2
+  depth into a virtual v1 camera", are ideas, not code);
+- each rewritten file says in its header which public sources it follows.
+
+The user's own files are ported under BSD-3-Clause by the user's decision to
+bring them here.
 
 Third-party pieces:
 
@@ -269,8 +291,8 @@ and is one commit (or a few) with a plain message.
 1. Design doc and log (this).
 2. `hid/motion`: `SensorFrame`, `CameraIntrinsics`, `MotionCapabilities`,
    `MotionDevice`, a `NullMotionDevice`, the `motion_device` cvar. No caller.
-3. `MotionCaptureSystem` owned by the emulator; logs which device it would
-   open.
+3. `MotionCaptureSystem` owned by the input system; logs which device it
+   would open.
 4. Virtual v1: nominal calibration tables, mm -> disparity, Bayer mosaic,
    with unit tests.
 5. Virtual v1: reprojection from another lens (ported `KinectDepthView`),
@@ -285,7 +307,7 @@ and is one commit (or a few) with a plain message.
 
 ## 9. Open questions
 
-- Licensing (§6): how to bring knuckleslee's code, or not.
+- ~~Licensing (§6)~~: decided 2026-11-17, rewrite.
 - Whether to build the guest side on knuckleslee's `kinect-v1-stage1`
   request-code work or redo it; and whether to talk to knuckleslee and
   ryantimjohn first so the efforts don't collide upstream.
