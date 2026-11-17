@@ -310,8 +310,8 @@ and is one commit (or a few) with a plain message.
    would open.
 4. Virtual v1: nominal calibration replies, the depth frame encoding
    (millimetres, big-endian, sensor order), Bayer mosaic, with unit tests.
-5. Virtual v1: reprojection from another lens (ported `KinectDepthView`),
-   with unit tests on drawn scenes.
+5. Virtual v1: reprojection from another lens (written anew in
+   `depth_reprojection.*`), with unit tests on drawn scenes.
 6. `PsCamDeviceRequest` guest side fed by the virtual v1 (depends on the
    decision about knuckleslee's request-code work).
 7. Kinect v2 backend (SDK 2.0).

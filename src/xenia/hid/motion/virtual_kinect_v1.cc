@@ -17,6 +17,21 @@ namespace xe {
 namespace hid {
 namespace motion {
 
+CameraIntrinsics V1DepthLens() {
+  CameraIntrinsics lens;
+  lens.focal_x = kV1DepthFocalLength;
+  lens.focal_y = kV1DepthFocalLength;
+  lens.centre_x = kV1DepthWidth * 0.5f;
+  lens.centre_y = kV1DepthHeight * 0.5f;
+  return lens;
+}
+
+DepthImage ReprojectToV1Depth(const DepthImage& source,
+                              const CameraPose& pose) {
+  return ReprojectDepth(source, V1DepthLens(), kV1DepthWidth, kV1DepthHeight,
+                        pose);
+}
+
 void FillV1DepthTable(std::span<uint16_t, kV1DepthTableEntries> table) {
   for (size_t i = 0; i < table.size(); ++i) {
     table[i] = uint16_t(i);

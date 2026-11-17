@@ -14,12 +14,13 @@
 #include <cstdint>
 #include <span>
 
+#include "xenia/hid/motion/depth_reprojection.h"
 #include "xenia/hid/motion/motion_types.h"
 
 // The virtual Kinect v1: what an Xbox 360 Kinect camera hands to a title's
 // NUI library through PsCamDeviceRequest, made from any motion device's
-// frames. This file has the depth side; colour, calibration replies and
-// reprojection from another lens come in later commits.
+// frames. This file has the depth side; colour and calibration replies come
+// in later commits.
 //
 // What the title expects comes from our own tracing (docs/kinect-pscam.md
 // §11): its tracker reads a 640x480 frame of big-endian 16-bit values in
@@ -37,6 +38,19 @@ constexpr uint32_t kV1DepthWidth = 640;
 constexpr uint32_t kV1DepthHeight = 480;
 constexpr size_t kV1DepthFrameBytes =
     size_t(kV1DepthWidth) * kV1DepthHeight * sizeof(uint16_t);  // 614400
+
+// The virtual v1's depth lens: an ideal pinhole at 640x480 with the Kinect
+// v1's nominal focal length. The Kinect for Windows SDK 1.8 publishes it as
+// NUI_CAMERA_DEPTH_NOMINAL_FOCAL_LENGTH_IN_PIXELS = 285.63 at 320x240, so
+// 571.26 at 640x480 (a 58.5 degree wide view), centred.
+constexpr float kV1DepthFocalLength = 571.26f;
+CameraIntrinsics V1DepthLens();
+
+// Another device's depth image as the virtual v1 would see it from `pose`
+// (where the v1 stands relative to that device's depth camera): 640x480,
+// through V1DepthLens(), ready for EncodeV1DepthFrame.
+DepthImage ReprojectToV1Depth(const DepthImage& source,
+                              const CameraPose& pose = {});
 
 // Request code 24's table: one entry per raw depth value 0..8191.
 constexpr size_t kV1DepthTableEntries = 8192;

@@ -4,6 +4,8 @@ add_library(xenia-hid-motion STATIC
   ${CMAKE_CURRENT_SOURCE_DIR}/motion_device.cc
   ${CMAKE_CURRENT_SOURCE_DIR}/motion_capture.h
   ${CMAKE_CURRENT_SOURCE_DIR}/motion_capture.cc
+  ${CMAKE_CURRENT_SOURCE_DIR}/depth_reprojection.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/depth_reprojection.cc
   ${CMAKE_CURRENT_SOURCE_DIR}/virtual_kinect_v1.h
   ${CMAKE_CURRENT_SOURCE_DIR}/virtual_kinect_v1.cc
 )

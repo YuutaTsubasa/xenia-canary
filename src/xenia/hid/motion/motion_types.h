@@ -56,6 +56,11 @@ struct DepthImage {
   uint32_t height = 0;
   CameraIntrinsics lens;
   std::vector<uint16_t> millimetres;
+  // Optional: each pixel's ray as two floats (x/z, y/z, in lens space: +x to
+  // the image's right, +y down, +z forward), already free of distortion.
+  // A device that knows them exactly (the Kinect v2 SDK's depth-to-camera
+  // table) fills these; otherwise they are worked out from `lens`.
+  std::vector<float> rays;
 
   bool empty() const { return millimetres.empty(); }
 };
