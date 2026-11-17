@@ -20,6 +20,7 @@
 #include "xenia/cpu/backend/backend.h"
 #include "xenia/cpu/export_resolver.h"
 #include "xenia/kernel/kernel.h"
+#include "xenia/kernel/kinect_camera.h"
 #include "xenia/kernel/nui.h"
 #include "xenia/kernel/smc.h"
 #include "xenia/kernel/util/kernel_fwd.h"
@@ -193,6 +194,7 @@ class KernelState {
   SystemManagementController* smc() const { return smc_.get(); }
 
   NUIController* nui() const { return nui_.get(); }
+  KinectCamera* kinect_camera() const { return kinect_camera_.get(); }
 
   xam::AchievementManager* achievement_manager() const {
     return xam_state()->achievement_manager();
@@ -374,6 +376,7 @@ class KernelState {
   std::unique_ptr<XmpVolumePatch> xmp_volume_patch_;
   std::unique_ptr<XConfig> xconfig_;
   std::unique_ptr<NUIController> nui_;
+  std::unique_ptr<KinectCamera> kinect_camera_;
 
   KernelVersion kernel_version_;
 

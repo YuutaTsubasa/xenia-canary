@@ -67,6 +67,7 @@ KernelState::KernelState(Emulator* emulator)
   xconfig_ =
       std::make_unique<XConfig>(emulator->storage_root() / "xconfig.settings");
   nui_ = std::make_unique<NUIController>();
+  kinect_camera_ = std::make_unique<KinectCamera>(this);
 
   InitializeKernelGuestGlobals();
   kernel_version_ = KernelVersion(cvars::kernel_build_version);
@@ -103,6 +104,9 @@ KernelState::~KernelState() {
     dispatch_cond_.notify_all();
     dispatch_thread_->Wait(0, 0, 0, nullptr);
   }
+
+  // Stops the camera's background work while guest memory still exists.
+  kinect_camera_.reset();
 
   executable_module_.reset();
   user_modules_.clear();
