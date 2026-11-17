@@ -11,6 +11,13 @@ add_library(xenia-hid-motion STATIC
   ${CMAKE_CURRENT_SOURCE_DIR}/kinect_v2_frames.h
   ${CMAKE_CURRENT_SOURCE_DIR}/kinect_v2_frames.cc
 )
+if(WIN32)
+  target_sources(xenia-hid-motion PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/kinect_v2_sdk.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/kinect_v2_device.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/kinect_v2_device.cc
+  )
+endif()
 target_link_libraries(xenia-hid-motion PUBLIC xenia-base)
 xe_target_defaults(xenia-hid-motion)
 

@@ -11,6 +11,11 @@
 
 #include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
+#include "xenia/base/platform.h"
+
+#if XE_PLATFORM_WIN32
+#include "xenia/hid/motion/kinect_v2_device.h"
+#endif
 
 DEFINE_string(motion_device, "none",
               "Motion-capture device Kinect titles see as their Kinect camera. "
@@ -69,8 +74,19 @@ MotionCaptureSystem::MotionCaptureSystem() {
 MotionCaptureSystem::~MotionCaptureSystem() { Reset(); }
 
 std::unique_ptr<MotionDevice> MotionCaptureSystem::CreateDevice() {
-  // No backends yet: every choice ends up with no device. Backends are added
-  // here one by one (docs/motion-capture.md, commit plan).
+  // Backends are added here one by one (docs/motion-capture.md, commit
+  // plan). Auto takes the first that exists in this build.
+  switch (kind_) {
+    case MotionDeviceKind::kAuto:
+    case MotionDeviceKind::kKinectV2:
+#if XE_PLATFORM_WIN32
+      return std::make_unique<KinectV2Device>();
+#else
+      break;
+#endif
+    default:
+      break;
+  }
   if (kind_ != MotionDeviceKind::kNone) {
     XELOGW("Motion capture: motion_device = {} is not available in this build",
            MotionDeviceKindName(kind_));
