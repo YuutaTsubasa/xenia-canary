@@ -340,7 +340,7 @@ For each downsampled value `v` (read and rewritten in place):
 
 * **T24 (code 24, `*(G+8760)`) is the raw → mm table.** It is indexed by the (downsampled) raw pixel value 0..8191, and its output is treated as mm with 0 meaning "no depth". [seen in 82793808]
 * **T11 (`*(G+8648)`) is mm → registration shift**, not raw → mm:
-  * `sub_82766FB8` (looks like NuiImageGetColorPixelCoordinatesFromDepthPixel; checks resolution arg == 2) indexes T11 with `(packedDepth >> 3) & 0xFFF` — i.e. the public packed format `mm << 3 | playerIndex` — and uses `T11[mm] >> 4` (arith.) as a horizontal pixel offset; it also mirrors x: `639 − 2*depthX` (depth coords at half resolution). [seen]
+  * `sub_82766FB8` (looks like NuiImageGetColorPixelCoordinatesFromDepthPixel; checks resolution arg == 2) indexes T11 with `(packedDepth >> 3) & 0x1FFF` (corrected in §12; first read as 0xFFF) — i.e. the public packed format `mm << 3 | playerIndex` — and uses `T11[mm] >> 4` (arith.) as a horizontal pixel offset; it also mirrors x: `639 − 2*depthX` (depth coords at half resolution). [seen]
   * Code 11 path (`sub_8276C788`): for k = 0..2047, entry `e_k` (u16, 0 < e_k < 8192) is a depth value; T11 is filled as a step function over indices [prev_e, e_k) with value `((k << 20 … ) − offset<<22) * scale >> 40` — a value computed from k (the disparity index). So the code-11 blob is a **2048-entry disparity → depth** table, and T11 is its inverse turned into a shift. [seen; exact fixed-point semantics inf]
 * G+8704 = T11[T24[raw]] (raw → shift) for 0 < T24 < 4000, else 0x8000 [from notes, CFA8]. Used only for registration textures (G+8708) [inf]; not used by the tracker path above.
 * **If code 24 fails (identity T24)**, the pixel values must themselves be **mm**, with 0 = no reading; valid 1..3999; 4000..8191 become "far" (8000). [inf from the code above]
@@ -386,3 +386,166 @@ Not visible: the library only issues code 30 (src, 422400, dst, &len=614400) and
 * The consumer of the `sub_82792970` descriptor (colour + depth offsets) — likely where colour (and maybe a full-res depth) reaches the GPU; decides Bayer vs YUV.
 * What worker+280's record holds (an 80x60 u16 player-label map is processed from it in `sub_82796170`, neighbour offsets ±2 and ±160 bytes) [?].
 * Whether the game itself (outside NUI) reads the 640x480 depth (e.g. for a silhouette display) and expects packed `mm<<3|player`; not traced.
+
+## 12. Calibration replies (codes 13, 11, 14)
+
+Third tracing pass (2026-11-18): what happens when calibration fails, how
+the code 11 fields are used, and what a driver can safely answer. Same
+title, same rules as above.
+
+Title 5345084D, source `Free-Riders-Recompiled/out/recomp/ppc/` only. G = 0x82B5D2B0.
+Tags: [seen] read in the code, [inf] inferred, [?] not determined.
+`T11` = u16[8192] at `*(G+8648)`, `T24` = `*(G+8760)`, `T8704` = `*(G+8704)`.
+`PolyX` = 10 floats at G+8568..G+8604, `PolyY` = 10 floats at G+8608..G+8644.
+
+### Q1. Failure handling
+
+### Inside `sub_8276CFA8` (calibration) [seen]
+1. Code 24 (block sp+96). `< 0` → fills T24 with identity 0..8191. Result not propagated. Then the T24 texture (G+8764) is rebuilt (`sub_824F3CF0` / `sub_824F22A0`).
+2. Code 33 (block sp+160, +28 = 1). Result ignored.
+3. Code 13 (block sp+128, 32 bytes). Code 14 is chosen only if **status >= 0 AND u8 +4 >= 5 AND u8 +5 >= 1** (0x8276D098..0x8276D0AC). Anything else, **including a failed code 13**, goes to code 11. A failed 13 is harmless. (Quirk: version 6.0 also selects code 11, because the minor check is independent.)
+4. `r30 = sub_8276C9B0()` or `sub_8276C788()`. This is the **return value of CFA8**.
+5. Regardless of the result: it zeroes 10 words G+10420..G+10456 (this forces the GPU registration constants to be re-uploaded; see Q4). Then, depending on G+2624 / G+0 bit 31 / G+10160, it calls `sub_8278E558` → `sub_8278F498` on the tracker object `*(0x82B60E98)`. That function only resets tracker state (zeroes fields and resets 3 player slots). It reads no calibration.
+
+### `sub_8276C788` (code 11) [seen]
+* It calls DevReq. **If the status is < 0, it returns the status at once** (0x8276C7BC → 0x8276C994).
+  * Nothing is zeroed. PolyX/PolyY keep whatever they held (zero after F640's memset of G). T11 is not memset.
+* On success it always returns 0. No field is validated, so nothing in the blob can make it fail.
+
+### `sub_8276C9B0` (code 14) [seen]
+* Same shape: `< 0` → return the status, touching nothing. Success → return 0.
+
+### Up through `sub_8276D160` (state 4, arg ≠ 0) [seen]
+* The order is code 27 (via `sub_82769F98`), then `sub_82778CA0` (code 35), then `if (code27 < 0) fail`, then `CFA8`.
+* **`CFA8 < 0` → jumps to 0x8276D3D8 with r30 = 0, r28 = 1.**
+  * G+88 (present) = 1, G+92 (streaming) = 0, return 0.
+  * Code 25 and code 15 are skipped, and the spinlock section is not entered.
+  * **No code 2 is sent**, even though code 27 already started the stream.
+* Worker `sub_8276EF90`: while G+92 == 0, it calls `D160(1)` and waits 30 ms. So the start is **retried every 30 ms**. What happens next depends on the code 0 state the driver reports:
+  * **The driver still reports 4:** the full start sequence runs again (27, 35, 24, 33, 13, 11...) every 30 ms. If the failure is permanent, **streaming never starts** (`NuiInitialize` itself has already succeeded).
+  * **The driver reports 2 after the earlier code 27:** D160 takes the state-2 branch (0x8276D1D4) and sets streaming = 1 **without ever having completed calibration, code 25 or code 15**. That works by accident: PolyX/PolyY = 0 and T11 = uninitialised allocation contents.
+* The recalibration path in `sub_8276EDD8` (slot flag 0x20 → `bl 0x8276CFA8` at 0x8276EE74) **ignores the return value** [seen].
+* **Conclusion:** answer code 11 with success. Failing it is either a 30 ms retry storm or an accidental, half-initialised start.
+
+### Q2. Code 11 fields
+
+The block is at sp+112 in a 4352-byte frame [seen].
+
+**Size limit:** C788 saves r30, r31 and LR at old_sp−24/−16/−8, which is block+4216, +4224 and +4232. **The driver must not write past block+4215.** A 4216-byte (0x1078) reply is the maximum safe size [seen/inf].
+
+| block off | type | use |
+|---|---|---|
+| +0 | u32 | 11 (written by the caller) |
+| +4 | – | not read |
+| +8..+48 | 6 × f64 `d0..d5` | `frsp` → G+8584, 8588, 8592, 8596, 8600, 8604 = PolyX c4..c9 |
+| +56..+96 | 6 × f64 `d6..d11` | → G+8624..8644 = PolyY c4..c9 |
+| +104 | f64 `ds` | `S = (s64) trunc(ds × K)`, where K is the f64 at **0x820991B0** (`lis -32246; lfd -28240`; value not in the C++) [seen/?] |
+| +112..+4207 | u16[2048] `e[k]` | knots (depth value at disparity index k) |
+| +4208..+4211 | – | not read |
+| +4212 | u16 `off` | disparity offset |
+
+Before the copy, G+8568 and G+8608 (40 bytes each) are zeroed. So **PolyX/PolyY c0..c3 (the cubic terms) are always 0 on the code-11 path** [seen].
+
+### T11 construction (loop 0x8276C8C4..0x8276C928) [seen]
+1. `memset(T11, 0, 16384)`.
+2. Set `prev = 0` and `val = 0`.
+3. For k = 0..2047, take `e = e[k]`. **If e == 0 or e >= 8192, skip it** (k still advances). Otherwise:
+   * if `(u16)prev < e`: `T11[prev .. e-1] = val`
+   * `prev = e`
+   * `val = (s16)( ((((u64)k << 20) & ~0x3FFFFF) − ((u64)off << 22)) × S >> 40 )`
+     * The mask makes `(k << 20) & ~0x3FFFFF` = `floor(k/4) << 22`.
+     * So `val = (s16) floor((floor(k/4) − off) × S / 2^18)`.
+4. Tail: if `(u16)prev < 2048`, set `T11[prev .. 2047] = val`. **The tail fill stops at 2048, not 8192.** Entries above the last knot stay 0 when the last knot is ≥ 2048.
+
+Consequences:
+* Knots must be **strictly increasing** to fill anything. A decreasing or repeated knot only updates `val`.
+* `T11[0 .. e_first−1] = 0`, and `T11[e_k .. e_{k+1}−1] = val(k)`.
+* **There is no division anywhere in C788.** `fctidz` of 0 is 0. `fctidz` of NaN/inf saturates without trapping. A zero blob is therefore arithmetically safe [seen].
+* T11 values are horizontal shifts in **1/16 pixel** (used as `T11 >> 4`, below).
+* Last step: the texture header G+8652 (8192×1, created over the T11 memory in F640 via `sub_825E0D38`/`sub_825E0E78`) is re-locked and unlocked. **T8704 is NOT rebuilt on the code-11 path.** Only C9B0 builds it. With code 11 it keeps its allocation contents (presumably zero under Xenia) [seen/inf].
+
+### Polynomial `sub_82769C20(poly, x, y)` [seen]
+* `u = x − Cx`, where Cx is the f32 at 0x820BC16C. **This is the same constant as C1 in the tracker's 3D conversion (§11).**
+* `v = y − Cy`, where Cy is the f32 at 0x8200F808. Values not visible; probably 320 / 240 [?].
+* `P = c0·u³ + c1·v³ + c2·u²v + c3·uv² + c4·u² + c5·v² + c6·uv + c7·u + c8·v + c9`
+* No division.
+
+### Who reads it
+1. **`sub_82766FB8`** (CPU depth → colour pixel; checks resolution arg == 2; returns 0x80070015 / 0x8007048F if the device is not streaming / not present) [seen]:
+   * Inputs: depth (dx, dy) at 320×240 (mirrored) and the packed depth word.
+   * `x' = 639 − 2dx`, `y' = 2dy` (sensor coordinates at 640×480).
+   * `shift = (s16)T11[(packed >> 3) & 0x1FFF] >> 4`. Note: **0x1FFF (13 bits)**, not 0xFFF as §11 says. The rlwinm mask covers bits 18..30.
+   * `colourX = 2dx − shift − PolyX(x', y')`, `colourY = 2dy + PolyY(x', y')`.
+   * Equivalently, in sensor coordinates: `colourSensorX = x' + shift + PolyX`, `colourY = y' + PolyY`.
+   * Optional view-area (zoom) adjustment: `2·(cx − 160) − va[1]`, `2·(cy − 120) − va[2]`.
+   * **Its only caller is `sub_827743E8`** (0x82775 area, the colour-camera settings module); see Q4. No `lis/addi` reference to 0x82766FB8 exists elsewhere [seen by grep].
+2. **GPU registration pass:** `sub_8276DFC8` → `sub_827695D0` → `sub_8278E8C8` → `sub_827918B0` (on object `*(0x82B60EA0)`) → `sub_827911F8` [seen].
+   * `sub_827911F8` copies the 10 floats of PolyX and PolyY plus the descriptors of the T11 texture (G+8652), the T8704 texture (G+8708) and the T24 texture (G+8764) into a 236-byte constant block, and sends it with `sub_824F8B30`.
+   * `sub_827918B0` then issues D3D draw state. It is the same object that receives the colour/depth slot offsets (§11 Q6).
+   * DFC8 re-uploads only when the 40-byte stream configuration differs from G+10420..G+10459 (which CFA8 zeroes).
+3. **Tracker path: not used.**
+   * There are no reads of G+8568..G+8648 / T11 in `sub_82793808`, `sub_8279ACD8`, `sub_8278EC88` or `sub_8278F5B0`.
+   * A grep of ppc_recomp.73–79 for those G offsets finds only C788, C9B0, 82766FB8, 827695D0, F640 and B998 [seen].
+   * The tracker reads only T24 [seen, §11]. CFA8's tracker call (`sub_8278F498`) is a reset that takes no calibration data [seen].
+
+### Q3. Proposed code-11 reply
+
+### A. Minimal: everything zero (recommended)
+* Reply: block +4..+4215 all zero (12 doubles = 0.0, ds = 0.0, e[] = 0, off = 0). Return STATUS_SUCCESS.
+* Result:
+  * PolyX = PolyY = 0.
+  * T11 is all zero: the memset clears it, every knot is skipped because e = 0, and the tail fill (`prev = 0 < 2048`) writes `T11[0..2047] = val = 0` [seen].
+* Mapping: `colourX = 2dx`, `colourY = 2dy`. Colour and depth are pixel-aligned at 2× scale, with zero parallax.
+* Safety:
+  * No division in C788 or in `sub_82769C20`/`82766FB8`.
+  * `S = trunc(0 × K) = 0`.
+  * **No NaN, no inf, no trap.**
+* This is exactly a "both cameras on the same optical axis, same intrinsics" pinhole model. The emulated driver produces depth and colour from the same source (or from a webcam plus a depth estimate), so this is also the physically correct answer for it.
+
+### B. Kinect-like ~2.5 cm baseline (optional)
+* Physics: shift(z) = f·b/z, with f ≈ 525 px (640-wide colour) and b ≈ 25 mm, so f·b = 13125 px·mm.
+* The library model is `shift16 = (floor(k/4) − off)·S/2^18`, i.e. linear in a disparity index k. This works because raw Kinect disparity is linear in 1/z.
+* Use a synthetic disparity with 1/z linear in k, with z from z_min = 400 mm to z_max = 8000 mm (< 8192):
+  * `e[k] = round( 1 / (1/400 − k·(1/400 − 1/8000)/2047) )`. This gives e[0] = 400 and e[2047] = 8000, and is increasing.
+  * Wanted shift (px, relative to z_min) = f·b·(1/400 − 1/z_k) = k · 13125 · 0.002375 / 2047 = **0.015228·k px** = **0.24364·k in 1/16 px**.
+  * With off = 0: `floor(k/4)·S/2^18 ≈ (k/4)·S/2^18` → S/2^18 = 0.97457 → **S ≈ 255 476**.
+  * So **ds = 255 476 / K**, where K is the double at guest 0x820991B0. K is unknown here, but the emulator can read it from guest memory at request time (title-specific).
+  * PolyX c9 (d5) = −f·b/z_min = **−32.8 px**, so the total is `x_c = x_d − f·b/z` (≈ 0 at infinity, −32.8 px at 0.4 m). The sign depends on which side the RGB camera sits [?].
+* Caveats:
+  * Rounding makes many low-k knots equal (≈ 0.19 mm per step near 400 mm). Equal knots are harmless (no fill, val updated).
+  * T11[8000..8191] stays 0 because the tail fill stops at 2048.
+  * T11 below 400 mm is 0.
+* **Not worth it unless the emulated colour image really comes from an offset camera.**
+
+### Code 14 is not recommended
+* C9B0 computes `f0 = K26 / ((u16@+4248 / 640) · u16@+4250 · d@+4240)` (0x8276CA60..0x8276CA70). Then per entry: `(i·f0 − c) / (i·f0)`.
+* With zero or small fields (+4248 < 640 → integer quotient 0) you get **division by zero → inf/NaN**, plus the unseen solver `sub_82769CC8`.
+* It also needs real Kinect registration fixed-point data. Avoid it by making code 13 select code 11.
+
+### Q4. Does registration matter for gameplay?
+* **Skeleton tracking: no** [seen]. The tracker uses only T24 and raw depth (§11). The calibration call into the tracker is a reset.
+* **CPU mapping `sub_82766FB8`:** its only caller is `sub_827743E8` (colour-settings module, 0x8277xxxx).
+  * It takes a skeleton-derived 3D point (the mean of three joint vectors × a constant at 0x820101B0), projects it to depth coordinates (`sub_82772210`), maps it to colour, and stores the offset from the image centre `2·(x−320)`, `2·(y−240)`, clamped to ±320/±240, at obj+116/+120 with obj+112 = 1.
+  * This looks like a **metering / region-of-interest point for the colour camera's auto exposure / white balance** (code 35) [inf].
+  * The game does not call `sub_82766FB8` directly [seen by grep].
+* **GPU pass (`sub_827918B0`):** produces the registered colour/depth images (player video / cut-out) [inf].
+* So registration affects only **how the player's camera picture lines up** (and where colour metering is aimed). Gameplay input does not depend on it [inf, strong].
+
+### Recommended driver answers
+| code | answer |
+|---|---|
+| 24 | fail (identity T24), as §11 says; depth in mm |
+| 33 | return 0 |
+| 13 | return 0 with +4 = 4, +5 = 0 (or just fail it). Never report ≥ 5.1 |
+| 11 | return 0. Write **zeros** at block+4..+4215 (or leave the caller's block unwritten; but the caller does not clear it, so the stack contains garbage, so **write the zeros**). Never write at or beyond block+4216 |
+| 14 | not reached; if implemented, return failure (it is only reached when 13 says ≥ 5.1) |
+
+* Never fail code 11 permanently. That causes a 30 ms start retry loop, or a half-initialised start if state 2 is reported.
+* **Important:** the caller does not memset the code-11 block. With a "return 0 without writing" stub, the 12 doubles, ds, knots and off are stack garbage. That can give NaN polynomials and junk T11, so the driver must fill the block.
+
+### Open questions
+* Values of K (0x820991B0), Cx (0x820BC16C) and Cy (0x8200F808). They need the XEX .rdata. Cx is shared with the tracker's C1.
+* Why floor(k/4)? Old firmware's disparity knots may be in 1/4 or 1/8 units. Exact Kinect semantics are not determined.
+* The shader that consumes the 236-byte constant block (T11/T8704/T24 textures + polys), and whether T8704 = 0 on the code-11 path changes the picture (real old-firmware Kinects take the same path, so presumably fine).
+* The identity of `sub_827743E8`'s three input vectors (which joints) and whether obj+112..+120 really feeds code 35.
+* G+2624 / G+10156 / G+10160 conditions for the tracker reset in CFA8.

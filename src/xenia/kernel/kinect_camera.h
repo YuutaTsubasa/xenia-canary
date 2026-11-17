@@ -51,6 +51,7 @@ class KinectCamera {
 
   X_STATUS ReplyDepthTable(xe::be<uint32_t>* words);
   X_STATUS ReplyTiming(xe::be<uint32_t>* words);
+  X_STATUS ReplyCalibration(xe::be<uint32_t>* words);
   X_STATUS QueueFrameRead(uint32_t block, xe::be<uint32_t>* words);
 
   // The worker: completes queued frame reads with the newest frames, and

@@ -11,6 +11,7 @@
 
 #include <array>
 #include <chrono>
+#include <cstring>
 #include <span>
 
 #include "xenia/base/logging.h"
@@ -44,10 +45,13 @@ enum PsCamRequest : uint32_t {
   kRequestGetState = 0,
   kRequestStop = 2,
   kRequestReadFrame = 5,
+  kRequestCalibrationOld = 11,
+  kRequestVersion = 13,
   kRequestDepthTable = 24,
   kRequestTiming = 25,
   kRequestStart = 27,
   kRequestUnknown33 = 33,
+  kRequestColourSettings = 35,
 };
 
 // The device state code 0 reports at block+4 (§3).
@@ -147,6 +151,21 @@ X_STATUS KinectCamera::Request(uint32_t block) {
     }
     case kRequestReadFrame:
       return QueueFrameRead(block, words);
+    case kRequestVersion: {
+      // Version 4.0 (section 12): below 5.1 the title asks for the older
+      // calibration format, code 11, which has a safe all-zero answer.
+      auto* bytes = reinterpret_cast<uint8_t*>(words);
+      bytes[4] = 4;  // major
+      bytes[5] = 0;  // minor
+      return X_STATUS_SUCCESS;
+    }
+    case kRequestCalibrationOld:
+      return ReplyCalibration(words);
+    case kRequestColourSettings:
+      // Colour-camera settings (exposure, white balance). The virtual
+      // camera has none to set; this status makes the title stop asking
+      // instead of retrying (section 2).
+      return kStatusDeviceNotConnected;
     case kRequestUnknown33:
       // Its meaning is unknown and the title ignores the result.
       return X_STATUS_SUCCESS;
@@ -314,6 +333,19 @@ void KinectCamera::CompleteRead(uint32_t block, X_STATUS status,
   uint64_t args[] = {block, status, bytes};
   kernel_state_->processor()->Execute(worker_->thread_state(), callback, args,
                                       xe::countof(args));
+}
+
+// Code 11 (section 12): the depth-to-colour registration, used only to
+// line the colour picture up with depth (the player's video), never by the
+// skeleton tracker. The reply runs to +4215 and the title does not clear
+// it, so every byte is written. All zero means "colour pixel = twice the
+// depth pixel, no parallax", which has no divisions and no NaN; a failure
+// instead would stop the title's start sequence (section 12).
+X_STATUS KinectCamera::ReplyCalibration(xe::be<uint32_t>* words) {
+  constexpr size_t kReplyEnd = 4216;  // bytes, from the block's start
+  auto* bytes = reinterpret_cast<uint8_t*>(words);
+  std::memset(bytes + 4, 0, kReplyEnd - 4);
+  return X_STATUS_SUCCESS;
 }
 
 // Code 25 (§2, §5): 14 timing words at +4..+56, in microseconds. +4 and +24
