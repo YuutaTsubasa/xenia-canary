@@ -153,14 +153,17 @@ The one piece that makes every device look like the sensor the title expects.
 
 - **Depth**: reproject each depth pixel (through its lens) into camera space,
   move it into a virtual v1 depth camera, project through the v1 lens at
-  640x480, nearest point wins; then millimetres -> 11-bit raw disparity with
-  the same calibration we report to the title (request code 24's
-  raw-to-millimetre table), so the title's conversion returns our
-  millimetres.
+  640x480, nearest point wins. The title converts each pixel through the
+  table it gets from request code 24 and treats the result as millimetres
+  ([kinect-pscam.md](kinect-pscam.md) §11). So the virtual v1 answers code
+  24 with an identity table and writes millimetres directly (0 = no reading,
+  big-endian, sensor order, not mirrored); no disparity encoding is needed.
+  Only a real v1 read over raw USB keeps its own disparity and table.
 - **Colour**: map to the v1 colour camera's 640x480 view (using the depth
   registration for alignment), then mosaic to Bayer as the v1 sends it.
-- **Calibration**: the registration block (request code 14) and the
-  raw-to-mm table (code 24) of a nominal v1, generated from fixed nominal
+- **Calibration**: the registration blocks (request codes 11/14, which only
+  affect depth-to-colour mapping, not the tracker's depth) and the identity
+  depth table (code 24) of a nominal v1, generated from fixed nominal
   parameters, so title, encoder and reprojection agree by construction.
 - **Tilt**: a virtual motor and accelerometer. A v2 and a webcam have no
   motor; the virtual one answers the title (angle, moving, gravity) and
@@ -305,8 +308,8 @@ and is one commit (or a few) with a plain message.
    `MotionDevice`, a `NullMotionDevice`, the `motion_device` cvar. No caller.
 3. `MotionCaptureSystem` owned by the input system; logs which device it
    would open.
-4. Virtual v1: nominal calibration tables, mm -> disparity, Bayer mosaic,
-   with unit tests.
+4. Virtual v1: nominal calibration replies, the depth frame encoding
+   (millimetres, big-endian, sensor order), Bayer mosaic, with unit tests.
 5. Virtual v1: reprojection from another lens (ported `KinectDepthView`),
    with unit tests on drawn scenes.
 6. `PsCamDeviceRequest` guest side fed by the virtual v1 (depends on the

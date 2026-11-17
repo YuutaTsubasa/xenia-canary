@@ -285,7 +285,7 @@ These feed two calls of a 3x3/affine solver (`sub_82769CC8`). The results land a
 
 ## 10. Open questions
 
-* The exact meaning of the code-5 depth pixel values: raw disparity indexed through the code-24 LUT, versus mm<<3|player. The consumer `sub_8278E5A0` → `sub_8278F5B0` was not traced.
+* ~~The exact meaning of the code-5 depth pixel values~~: answered in §11.
 * Does the driver write anything at block+4 (code 5) or block+24 (code 35), and how big is the frame-info struct at `*(block+40)`? Only +0 (frame number) is read for depth.
 * The colour pixel format for bpp 1 vs 2. Which init flag corresponds to 0x40 in the public NUI flags?
 * The full code 25 reply semantics (only +4, +24, +36, +44, +52, +56 are used directly).
@@ -293,3 +293,96 @@ These feed two calls of a 3x3/affine solver (`sub_82769CC8`). The results land a
 * The D160 state 6/7 switch target 0x8276D3F8 coincides with a function entry. Is it a recompiler boundary artefact?
 * The 92-byte code-35 settings struct layout (defaults: +4 = 1/2, +24 = 1, +32/+36 = 0x1999, +40/+44 = 0xCCCC, +48/+52/+56 = 0x10000, +68 = XGetVideoMode-derived), and the meaning of the negated field at +12.
 * The initial value of `DevReq` (0x82AE8C7C) in .data, assumed to be 0x82ACC27C.
+
+## 11. Depth pixel format (what the tracker reads)
+
+Second tracing pass (2026-11-18): follows the depth buffer from the worker
+into the skeleton tracker to find what the driver must write. Same title,
+same rules as above.
+
+Source: `Free-Riders-Recompiled/out/recomp/ppc/ppc_recomp.{74,77}.cpp`. G = 0x82B5D2B0.
+Tags: [seen] = read directly in the code, [inf] = inferred, [?] = not determined.
+Note: G+8648 / G+8704 / G+8760 are *pointer fields* to the 16 KB u16[8192] tables (`lwz r4,8760(r30)` in EDD8). Below, `T24` = `*(G+8760)` (code-24 table), `T11` = `*(G+8648)`.
+
+### Call chain (depth path)
+
+| step | function | what it does |
+|---|---|---|
+| 1 | `sub_8276EDD8` | passes r3 = depth rec+100 (640x480 u16 buffer), r4 = T24, r5 = sp+80 (two u32 "tracked skeleton IDs" copied from G+10164/10172), r6 = buffer of record at worker+280, r7 = output area `[G+8816]+112 + worker+284`, r8 = worker, r9 = worker+32 [seen] |
+| 2 | `sub_8278E5A0` | null-checks the buffer and the tracker object `*(0x82B60E98)`, then forwards to F5B0 [seen] |
+| 3 | `sub_8278F5B0` | stores the depth pointer at obj+0x10000+1692; optional debug hook object `*(0x82B60E9C)` gets (buf, 640, 480, T24) via vtable[0]; then calls `sub_8278EC88` [seen] |
+| 4 | `sub_8278EC88` | skeleton-ID bookkeeping, then calls `sub_8279ACD8(…, depth=r15, table=r14, …)` [seen] |
+| 5 | `sub_8279ACD8` | per-frame pipeline; calls `sub_82793808(obj, depth, T24)` (0x8279B26C area) [seen] |
+| 6 | **`sub_82793808`** | **the only place the raw depth pixels are read** in this path: 8x8 downsample + T24 lookup + 3D conversion [seen] |
+
+The colour record (worker+276) is *not* passed into this chain (see Q6).
+
+### 1. How each 16-bit pixel is interpreted (`sub_82793808`)
+
+**Phase 1 — downsample 640x480 → 80x60, VMX** [seen]
+* Reads the buffer as **big-endian u16** with `lvx`; per 64-pixel (128-byte) segment, splits even/odd halfwords (`vperm` with constant at 0x820C0FF0 and `vpkuwum`) and takes `vmaxuh` of each horizontal pair, then `vmaxuh` with the same pair in the next row → **max of each 2x2 block**. [seen; the vperm constant itself is not in the C++, so "even halfwords" is inf — it is the only choice that pairs with `vpkuwum`'s odd halfwords]
+* Over 4 row-pairs (8 rows), keeps a running **`vminuh` of the 2x2 maxima, skipping any 2x2 max that equals 0** (`vcmpequh` with zero vector, `vsel` keeps the old value). Accumulator starts at the splat constant at 0x820C1000 (presumably 0xFFFF or 0x7FFF; either is ≥ 8192 → "invalid" later). [seen / constant ?]
+* Then reduces horizontally with `vminuh` (vpermwi/vsldoi) so each 8x8 block becomes one value = **min over its 16 non-zero 2x2 maxima**. No masking (`& 0x7FF`), no shift, no byte swap is applied to pixels. [seen]
+* Row loop: outer counter 59 + one tail row = 60 output rows, input pointer advances 8 rows (10240 bytes) per output row. [seen]
+* Output u16[80*60] at obj+0x2EFF0 (row stride 160 bytes). Within a row, segment stores go to **decreasing addresses** (r31 −= 16, then +320 per row) and pass through a final `vperm` (constant at 0x820C1020) → **horizontally mirrored** 80-wide row. [seen store order; reversal within the 8-lane vector inf]
+
+**Phase 2 — per cell, 60 rows x 80 columns** [seen, loop at 0x82793D5C..0x82793FB4]
+For each downsampled value `v` (read and rewritten in place):
+* `v == 32767` → stays 32767 (invalid).
+* `v >= 8192` → 32767 (invalid).
+* else `v = T24[v]`; if that is **0 → 32767** (invalid); if **> 3999 → 8000** (clamped "far"); otherwise kept.
+* Then converts to a float 3D point stored in a 16-byte cell record (`obj+0x2C4F0`-ish base `addis 2,-15376`): X = (col*8+4 − C1)·k·z, Y = (C2 − (row*8+4))·k·z, Z = z (constants at 0x820C0FD0, 0x820BC16C, 0x820C0FE0; values not visible) [seen formula / constants ?]. Compares |ΔZ| with previous frame against 10 and 100, compares z against a per-cell background value scaled by 64226/65536 and 64881/65536, and sets flag bits at +12/+14. [seen]
+* After the loop, if state field obj+0x31974 == 15, background cells that are 0 are set to 32767. Counter of "near" cells written to obj+0x33F28. [seen]
+
+**Units:** the post-T24 value is compared against 3999/8000 and used directly as Z with motion thresholds 10 and 100 → **millimetres** [inf, strong].
+
+### 2. Which table is raw → mm
+
+* **T24 (code 24, `*(G+8760)`) is the raw → mm table.** It is indexed by the (downsampled) raw pixel value 0..8191, and its output is treated as mm with 0 meaning "no depth". [seen in 82793808]
+* **T11 (`*(G+8648)`) is mm → registration shift**, not raw → mm:
+  * `sub_82766FB8` (looks like NuiImageGetColorPixelCoordinatesFromDepthPixel; checks resolution arg == 2) indexes T11 with `(packedDepth >> 3) & 0xFFF` — i.e. the public packed format `mm << 3 | playerIndex` — and uses `T11[mm] >> 4` (arith.) as a horizontal pixel offset; it also mirrors x: `639 − 2*depthX` (depth coords at half resolution). [seen]
+  * Code 11 path (`sub_8276C788`): for k = 0..2047, entry `e_k` (u16, 0 < e_k < 8192) is a depth value; T11 is filled as a step function over indices [prev_e, e_k) with value `((k << 20 … ) − offset<<22) * scale >> 40` — a value computed from k (the disparity index). So the code-11 blob is a **2048-entry disparity → depth** table, and T11 is its inverse turned into a shift. [seen; exact fixed-point semantics inf]
+* G+8704 = T11[T24[raw]] (raw → shift) for 0 < T24 < 4000, else 0x8000 [from notes, CFA8]. Used only for registration textures (G+8708) [inf]; not used by the tracker path above.
+* **If code 24 fails (identity T24)**, the pixel values must themselves be **mm**, with 0 = no reading; valid 1..3999; 4000..8191 become "far" (8000). [inf from the code above]
+
+### 3. "No depth" value
+
+* **0**: the cleanest "no reading". Zero pixels lose every 2x2 max; an all-zero 2x2 block is skipped entirely in the 8x8 min. An all-zero 8x8 block → accumulator constant → ≥ 8192 → 32767. [seen]
+* **Any value ≥ 8192** (e.g. 0xFFFF, 0x7FFF): wins the 2x2 max, but loses the 8x8 min against any valid block; if a whole 8x8 block is ≥ 8192 → invalid. Acts like "infinitely far". [seen]
+* **2047 / 0x7FF**: *not special in the code*. It is a normal table index; it is invalid only if `T24[2047] == 0`. With raw Kinect disparity, 2047 is the hardware "no reading" and T24[2047] is presumably 0 [inf]. With an identity T24 it would read as 2047 mm — wrong. [seen/inf]
+* Since 2x2 uses **max** and 8x8 uses **min** (ignoring 0), values must **increase with distance** (true for both raw disparity-code and mm). [inf]
+* No `& 0x7FF` / `& 0x1FFF` mask is applied; bits above 12 are not stripped, so a player index in the low 3 bits (`mm<<3|p`) is NOT expected here — the driver frame is **not** in the public packed format. [seen: no mask; inf: format]
+
+### 4. Downsampling / orientation
+
+* Tracker sees **80x60**, each cell = 8x8 source pixels, rule "min over non-zero 2x2 maxima". Not 320x240. [seen]
+* Rows top → bottom in source order (no vertical flip); Y in 3D is computed as (C2 − y) i.e. up-positive. [seen]
+* Columns are **mirrored** on output (decreasing store addresses + final vperm). [seen/inf] So the driver's 640x480 frame is expected in **sensor (unmirrored) order**, and the library mirrors it. Consistent with `sub_82766FB8` using `639 − 2x`. [inf]
+* After tracking, `sub_8276EDD8` flushes/finishes 19200 bytes (= 80*60*4) at the output area, and 614400 bytes at the depth slot (`sub_82506EF8(start,end,1)`). [seen]
+
+### 5. Code 30 bit order
+
+Not visible: the library only issues code 30 (src, 422400, dst, &len=614400) and checks `*len == 614400`; it never touches the packed bits. [seen] Delivering 614400-byte unpacked frames avoids it. Expected unpacked result: one BE u16 per pixel holding the 11-bit value (0..2047) in the low bits [inf, from the 8192-index table and no masking].
+
+### 6. Colour buffer
+
+* The colour record goes to worker+276 (`sub_8276A200` pops it from G+644 and sets a flag via rlwimi) [seen]. It is not passed to `sub_8278E5A0`. [seen]
+* `sub_8276E0F8` passes `depthSlotOffset >> 3` and `colourSlotOffset >> 2` (from rec+104) plus worker+284>>2 into `sub_8278E970` → `sub_82792970`, which only writes them into a command descriptor at `*(obj+112)` (obj = `*(0x82B60EA0)`) and flushes it with `sub_82506EF8`. The consumer of that descriptor (another thread or a GPU shader) was not found. [seen / consumer ?]
+* No CPU demosaic (2x2 Bayer) or YUV unpack was found in the paths traced. The `>> 2` (4-byte units) for colour vs `>> 3` for depth hints the colour offset is used as a 32-bit-element index [?]. **Bayer vs YUV422 remains open.**
+
+### Implications for an emulated driver
+
+1. Code 5 depth: write **640x480 big-endian u16**, row-major, top row first, **not mirrored** (sensor order), 614400 bytes, so code 30 is never needed.
+2. Pick one consistent encoding:
+   * **Easiest:** fail code 24 (identity T24) and write **depth in mm** directly, 0 = no reading, clamp ≥ 4000 to something like 4000..8191 (treated as far) — or write 0 for "no reading". Keep values < 8192, no player bits, no shift.
+   * **Hardware-like:** answer code 24 with a disparity→mm table (T24[2047] = 0) and write 11-bit raw disparity (2047 = no reading). Only worth it if real raw data is available.
+3. Whatever is written must be monotonic increasing with distance; 0 must mean "no data".
+4. Calibration (codes 11/14) only affects registration (depth↔colour mapping, T11/T8704 textures), not the tracker's depth values. A plausible code-11 blob (2048 knots, increasing) is enough; its effect on skeleton tracking was not seen in this path.
+5. Useful range: 1..3999 mm (≈ 0.8–4 m typical); the tracker's own background logic compares against previous frames, so a stable background helps.
+
+### Open questions
+
+* Exact float constants k, C1, C2 (0x820C0FD0/0FE0, 0x820BC16C) and the accumulator init at 0x820C1000 / perms at 0x820C0FF0, 0x820C1020 — need the XEX data section (would confirm the mirror and focal length).
+* The consumer of the `sub_82792970` descriptor (colour + depth offsets) — likely where colour (and maybe a full-res depth) reaches the GPU; decides Bayer vs YUV.
+* What worker+280's record holds (an 80x60 u16 player-label map is processed from it in `sub_82796170`, neighbour offsets ±2 and ±160 bytes) [?].
+* Whether the game itself (outside NUI) reads the 640x480 depth (e.g. for a silhouette display) and expects packed `mm<<3|player`; not traced.
