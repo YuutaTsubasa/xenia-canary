@@ -18,6 +18,7 @@
 
 #include "xenia/base/byte_order.h"
 #include "xenia/hid/motion/motion_types.h"
+#include "xenia/hid/motion/virtual_tilt.h"
 #include "xenia/kernel/xobject.h"
 #include "xenia/xbox.h"
 
@@ -44,11 +45,19 @@ class KinectCamera {
   // block, whose first word is the request code. Returns an NTSTATUS.
   X_STATUS Request(uint32_t block);
 
- private:
+  // Whether the player chose a motion-capture device (motion_device is not
+  // none). Without one, the XAM Kinect functions keep Xenia's earlier
+  // behaviour (driven by the console settings' Kinect flag).
+  bool DeviceChosen();
   // Whether a camera is there for the title. Opens the host device the
   // first time it is asked.
   bool CameraPresent();
 
+  // The Kinect's tilt motor and accelerometer, as XAM's tilt functions see
+  // them. Virtual for now: no backend drives a real motor yet.
+  hid::motion::VirtualTilt& tilt() { return tilt_; }
+
+ private:
   X_STATUS ReplyDepthTable(xe::be<uint32_t>* words);
   X_STATUS ReplyTiming(xe::be<uint32_t>* words);
   X_STATUS ReplyCalibration(xe::be<uint32_t>* words);
@@ -62,6 +71,7 @@ class KinectCamera {
   void CompleteRead(uint32_t block, X_STATUS status, uint32_t bytes);
 
   KernelState* kernel_state_;
+  hid::motion::VirtualTilt tilt_;
   std::mutex lock_;
   std::condition_variable wake_;
   bool streaming_ = false;  // between a start (27) and a stop (2)

@@ -7,11 +7,14 @@
  ******************************************************************************
  */
 
+#include <cstring>
 #include "xenia/base/logging.h"
 #include "xenia/emulator.h"
 #include "xenia/kernel/kernel_flags.h"
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/nui.h"
+
+#include "xenia/kernel/kinect_camera.h"
 #include "xenia/kernel/util/shim_utils.h"
 #include "xenia/kernel/xam/xam_private.h"
 #include "xenia/xbox.h"
@@ -58,6 +61,20 @@ dword_result_t XamNuiGetDeviceStatus_entry(
   */
 
   status_ptr.Zero();
+
+  auto camera = kernel_state()->kinect_camera();
+  if (camera->DeviceChosen()) {
+    // Titles read only status_bits, whatever the result (docs/
+    // kinect-pscam.md section 13): bit 0 gates their Kinect play, and bits 0
+    // and 1 together are what they keep as "usable".
+    if (!camera->CameraPresent()) {
+      status_ptr->camera_status = 0xC000009D;  // STATUS_DEVICE_NOT_CONNECTED
+      status_ptr->tilt_status = 0xC000009D;
+      return 0xC0050006;
+    }
+    status_ptr->status_bits = 0x3;
+    return X_ERROR_SUCCESS;
+  }
 
   const bool kinect_initialized = kernel_state()->nui()->NuiInitialized();
 
@@ -136,6 +153,28 @@ dword_result_t XamNuiCameraTiltGetStatus_entry(
       tilt_status->signature != make_fourcc("XtSs")) {
     return X_E_FAIL;
   }
+  auto camera = kernel_state()->kinect_camera();
+  if (camera->DeviceChosen()) {
+    if (!camera->CameraPresent()) {
+      return X_E_DEVICE_NOT_CONNECTED;
+    }
+    // The virtual motor: never moving (a title resets its tracker while it
+    // moves), gravity matching its angle. +0x08..+0x1F are left as they are.
+    auto& tilt = camera->tilt();
+    auto gravity = tilt.gravity();
+    auto floor_plane = tilt.floor_plane();
+    auto floor_gravity = tilt.floor_gravity();
+    for (size_t i = 0; i < 3; ++i) {
+      tilt_status->gravity_long_avg[i] = gravity[i];
+      tilt_status->floor_gravity[i] = floor_gravity[i];
+    }
+    for (size_t i = 0; i < 4; ++i) {
+      tilt_status->floor_plane[i] = floor_plane[i];
+    }
+    tilt_status->flags = X_TILT_STATUS_FLAGS(0);
+    tilt_status->lock_flags = 0;
+    return X_ERROR_SUCCESS;
+  }
   // TODO(knuckleslee): Report the Kinect accelerometer and motor status.
   return X_E_FAIL;
 }
@@ -143,6 +182,19 @@ DECLARE_XAM_EXPORT1(XamNuiCameraTiltGetStatus, kNone, kStub);
 
 dword_result_t XamNuiCameraElevationGetAngle_entry(lpdword_t elevation_angle,
                                                    lpdword_t camera_moving) {
+  auto camera = kernel_state()->kinect_camera();
+  if (camera->DeviceChosen()) {
+    if (!camera->CameraPresent()) {
+      return X_E_DEVICE_NOT_CONNECTED;
+    }
+    if (elevation_angle) {
+      *elevation_angle = uint32_t(camera->tilt().angle());
+    }
+    if (camera_moving) {
+      *camera_moving = 0;
+    }
+    return X_ERROR_SUCCESS;
+  }
   X_NUI_TILT_STATUS tilt_status = {};
   tilt_status.buffer_size = sizeof(tilt_status);
   tilt_status.signature = make_fourcc("XtSs");  // (XtSs)?
@@ -160,11 +212,72 @@ dword_result_t XamNuiCameraElevationGetAngle_entry(lpdword_t elevation_angle,
 }
 DECLARE_XAM_EXPORT1(XamNuiCameraElevationGetAngle, kNone, kStub);
 
+// The tilt calls below work only with a motion-capture device chosen; without
+// one there is no Kinect to move. A title ignores their results (docs/
+// kinect-pscam.md section 13).
+dword_result_t XamNuiCameraElevationSetAngle_entry(int_t degrees) {
+  auto camera = kernel_state()->kinect_camera();
+  if (!camera->CameraPresent()) {
+    return X_E_DEVICE_NOT_CONNECTED;
+  }
+  if (degrees < hid::motion::kV1TiltMinDegrees ||
+      degrees > hid::motion::kV1TiltMaxDegrees) {
+    return X_E_INVALIDARG;
+  }
+  camera->tilt().SetAngle(degrees);
+  return X_ERROR_SUCCESS;
+}
+DECLARE_XAM_EXPORT1(XamNuiCameraElevationSetAngle, kNone, kImplemented);
+
+dword_result_t XamNuiCameraElevationStopMovement_entry() {
+  // The virtual motor is never moving.
+  return kernel_state()->kinect_camera()->CameraPresent()
+             ? X_ERROR_SUCCESS
+             : X_E_DEVICE_NOT_CONNECTED;
+}
+DECLARE_XAM_EXPORT1(XamNuiCameraElevationStopMovement, kNone, kImplemented);
+
+// The floor plane comes by value as two 64-bit halves: (nx, ny) and (nz, d),
+// each float in the high word first. `first` is set on the first call after
+// the library's own aiming move.
+dword_result_t XamNuiCameraRememberFloor_entry(qword_t plane_xy,
+                                               qword_t plane_zd,
+                                               dword_t first) {
+  auto camera = kernel_state()->kinect_camera();
+  if (!camera->CameraPresent()) {
+    return X_E_DEVICE_NOT_CONNECTED;
+  }
+  auto to_float = [](uint32_t bits) {
+    float value;
+    std::memcpy(&value, &bits, sizeof(value));
+    return value;
+  };
+  uint64_t xy = plane_xy, zd = plane_zd;
+  camera->tilt().RememberFloor(
+      {to_float(uint32_t(xy >> 32)), to_float(uint32_t(xy)),
+       to_float(uint32_t(zd >> 32)), to_float(uint32_t(zd))});
+  return X_ERROR_SUCCESS;
+}
+DECLARE_XAM_EXPORT1(XamNuiCameraRememberFloor, kNone, kImplemented);
+
+// How a title's tilt request went, for the system's tilt UI; nothing here
+// shows one.
+dword_result_t XamNuiCameraTiltReportStatus_entry(dword_t code,
+                                                  lpvoid_t record) {
+  XELOGD("XamNuiCameraTiltReportStatus({:08X})", uint32_t(code));
+  return X_ERROR_SUCCESS;
+}
+DECLARE_XAM_EXPORT1(XamNuiCameraTiltReportStatus, kNone, kStub);
+
 dword_result_t XamNuiCameraGetTiltControllerType_entry() {
   /* Notes:
      - Earlier decompile notes: DetroitDeviceRequest and
        (LZCOUNT(result) << 0x20) >> 0x25.
   */
+  auto camera = kernel_state()->kinect_camera();
+  if (camera->DeviceChosen()) {
+    return camera->CameraPresent() ? 1 : 0;  // 1: a Kinect v1 motor
+  }
   // TODO(boma): Get the controller type from connected device.
   // Currently only reports no controller or type 1.
   const bool kinect_initialized =

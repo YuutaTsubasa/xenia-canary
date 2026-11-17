@@ -10,12 +10,19 @@
 #include "xenia/kernel/nui.h"
 #include "xenia/base/assert.h"
 #include "xenia/kernel/kernel_state.h"
+#include "xenia/kernel/kinect_camera.h"
 #include "xenia/xbox.h"
 
 namespace xe {
 namespace kernel {
 NUIController::NUIController() {};
 bool NUIController::NuiInitialized() {
+  // With a motion-capture device chosen, the Kinect is ready when that
+  // device runs.
+  auto camera = KernelState::shared()->kinect_camera();
+  if (camera->DeviceChosen()) {
+    return camera->CameraPresent();
+  }
   // TODO(boma): Proper device readiness.
   return (KernelState::shared()->xconfig()->ReadSetting<uint32_t>(
               X_CONFIG_CATEGORY::XCONFIG_USER_CATEGORY,

@@ -59,21 +59,32 @@ class NUIController {
 };
 
 enum X_TILT_STATUS_FLAGS : uint32_t {
-  // 0x1 and 0x2 moving
+  // 0x1 and 0x2 moving: a title's NUI library resets its skeleton tracker
+  // while either is set (docs/kinect-pscam.md section 13).
   TILT_STATUS_UNK1 = 0x1,
   TILT_STATUS_UNK2 = 0x2,
   TILT_STATUS_STALLED = 0x4,
   TILT_STATUS_ERROR = 0x8,
+  // Makes the library aim the camera again (section 13).
+  TILT_STATUS_REAIM = 0x10,
 };
 
+// Layout from 0x20 on as a title reads it (docs/kinect-pscam.md section 13).
 struct X_NUI_TILT_STATUS {
   be<uint32_t> buffer_size;
-  be<uint32_t> signature;  // 'XtSs'
-  be<uint32_t> unknown_08[6];
-  // Gravity direction.
+  be<uint32_t> signature;      // 'XtSs'
+  be<uint32_t> unknown_08[6];  // never read
+  // Gravity from the accelerometer (x, y, z); only the direction is used.
+  // The library reads the tilt angle as atan2(z, y).
   be<int32_t> gravity_long_avg[3];
   be<X_TILT_STATUS_FLAGS> flags;
-  be<uint32_t> unknown_30[8];
+  // The floor last remembered (XamNuiCameraRememberFloor): plane nx, ny, nz,
+  // d. d != 0 means one is remembered.
+  be<float> floor_plane[4];
+  // Bit 0: tilting is locked.
+  be<uint32_t> lock_flags;
+  // Gravity when the floor was remembered.
+  be<int32_t> floor_gravity[3];
 };
 static_assert_size(X_NUI_TILT_STATUS, 0x50);
 

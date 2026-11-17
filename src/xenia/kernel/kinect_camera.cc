@@ -99,12 +99,16 @@ KinectCamera::~KinectCamera() {
   }
 }
 
-bool KinectCamera::CameraPresent() {
+bool KinectCamera::DeviceChosen() {
   auto motion = MotionSystem(kernel_state_);
-  if (!motion || motion->kind() == hid::motion::MotionDeviceKind::kNone) {
+  return motion && motion->kind() != hid::motion::MotionDeviceKind::kNone;
+}
+
+bool KinectCamera::CameraPresent() {
+  if (!DeviceChosen()) {
     return false;
   }
-  return motion->Acquire();
+  return MotionSystem(kernel_state_)->Acquire();
 }
 
 X_STATUS KinectCamera::Request(uint32_t block) {
