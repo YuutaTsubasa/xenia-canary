@@ -146,4 +146,25 @@ TEST_CASE("A ray table gives the same picture as its lens",
   REQUIRE(differing < a.millimetres.size() / 200);
 }
 
+TEST_CASE("Pixels without a ray are left out", "[motion][depth_reprojection]") {
+  DepthImage depth = DrawScene(2000);
+  depth.lens = {};
+  depth.rays.resize(size_t(512) * 424 * 2);
+  for (uint32_t y = 0; y < 424; ++y) {
+    for (uint32_t x = 0; x < 512; ++x) {
+      auto ray = PixelToRay(WideLens(), x + 0.5f, y + 0.5f);
+      // The left half has no rays, as a device's table may have at its edges.
+      float nan = std::nanf("");
+      depth.rays[(size_t(y) * 512 + x) * 2] = x < 256 ? nan : ray[0];
+      depth.rays[(size_t(y) * 512 + x) * 2 + 1] = x < 256 ? nan : ray[1];
+    }
+  }
+  DepthImage v1 = ReprojectToV1Depth(depth);
+  for (uint16_t mm : v1.millimetres) {
+    REQUIRE((mm == 0 || (mm > 1990 && mm < 2010)));
+  }
+  REQUIRE(At(v1, 160, 240) == 0);
+  REQUIRE(At(v1, 480, 240) != 0);
+}
+
 }  // namespace xe::hid::motion::test

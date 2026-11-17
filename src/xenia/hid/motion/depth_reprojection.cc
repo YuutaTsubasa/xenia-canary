@@ -107,6 +107,9 @@ DepthImage ReprojectDepth(const DepthImage& source,
       if (have_rays) {
         ray_x = source.rays[index * 2];
         ray_y = source.rays[index * 2 + 1];
+        if (!std::isfinite(ray_x) || !std::isfinite(ray_y)) {
+          continue;  // a pixel the device's table has no ray for
+        }
       } else {
         auto ray = PixelToRay(source.lens, sx + 0.5f, sy + 0.5f);
         ray_x = ray[0];
@@ -129,7 +132,8 @@ DepthImage ReprojectDepth(const DepthImage& source,
       if (have_rays) {
         size_t next = sx + 1 < source.width ? index + 1 : index - 1;
         float ray_step = std::abs(source.rays[next * 2] - ray_x);
-        span = ray_step * z * target_lens.focal_x / qz;
+        span = std::isfinite(ray_step) ? ray_step * z * target_lens.focal_x / qz
+                                       : 1.0f;
       } else {
         span = (target_lens.focal_x / source_focal) * (z / qz);
       }
