@@ -318,6 +318,8 @@ and is one commit (or a few) with a plain message.
    on hardware; see §8.1.
 8. Virtual tilt (`DetroitDeviceRequest`, `XamNuiCameraTilt*`), device status
    from the motion system instead of the console-settings flag.
+   Done 2026-11-18 through XAM only (the traced title does not import
+   `DetroitDeviceRequest`); see §8.2.
 9. Kinect v1 backends (SDK 1.8; raw USB).
 10. Webcam capture and pose model; synthetic depth (experimental).
 
@@ -344,6 +346,23 @@ and is one commit (or a few) with a plain message.
 - Still to do: colour, bodies or floor plane (not needed by the title's
   own tracker), and a first run with a real Kinect v2.
 
+### 8.2 Virtual tilt and device status as written
+
+From the fourth trace (kinect-pscam.md §13):
+- `hid/motion/virtual_tilt.*`: the motor arrives at once (a title resets
+  its tracker while the moving bits are set), clamps to -27..27 degrees,
+  and reports gravity whose atan2(z, y) is the angle, which is how the
+  title checks it arrived. The camera picture does not tilt; a later step
+  could turn the reprojection (`CameraPose`) by the virtual angle so the
+  title's floor search sees the view move.
+- XAM answers from it only when `motion_device` is not none:
+  `XamNuiGetDeviceStatus` status_bits 0x3 while the device runs,
+  `XamNuiCameraTiltGetStatus`, `ElevationGetAngle`/`SetAngle`,
+  `StopMovement`, `RememberFloor`, `TiltReportStatus` (logged).
+- Not done: invoking the tilt callback (it carries system tilt requests,
+  e.g. from a tuner UI, which Xenia does not have), a real v1 motor, and
+  `DetroitDeviceRequest` for titles that import it.
+
 ## 9. Open questions
 
 - ~~Licensing (§6)~~: decided 2026-11-17, rewrite.
@@ -354,5 +373,7 @@ and is one commit (or a few) with a plain message.
 - The v2 axis handling (§8.1) and whether the title tracks from
   reprojected v2 depth at all: needs a real Kinect v2 (the PC this was
   written on has none).
+- Whether reporting a tilt the camera did not make confuses the title's
+  floor search when it sweeps the angle (§8.2); needs a game run.
 - Test titles: which ones the person in Free-Riders-Recompiled#421 will try
   first, and what logs to ask for.
