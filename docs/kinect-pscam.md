@@ -549,3 +549,250 @@ Consequences:
 * The shader that consumes the 236-byte constant block (T11/T8704/T24 textures + polys), and whether T8704 = 0 on the code-11 path changes the picture (real old-firmware Kinects take the same path, so presumably fine).
 * The identity of `sub_827743E8`'s three input vectors (which joints) and whether obj+112..+120 really feeds code 35.
 * G+2624 / G+10156 / G+10160 conditions for the tracker reset in CFA8.
+
+## 13. Tilt motor and device status (XAM)
+
+Fourth tracing pass (2026-11-18): how the same title uses the XAM tilt and
+device-status imports (section 8 left them out). Same title, same rules
+as above.
+
+Source: `Free-Riders-Recompiled\out\recomp\ppc\ppc_recomp.74.cpp` (NUI library, 0x82764938..0x82766BC8), plus `.3/.39/.48/.92/.93.cpp` for the game-side device status calls. Read only.
+Tags follow kinect-pscam.md: **[seen]** = read from the instructions; **[inf]** = inferred from how values are used; **[?]** = guess.
+The recomp has no .rdata, so float constants are known only by address. They are listed in §12.
+
+### 0. Layout of the library's tilt state
+
+* `T` = 0x82B5D060 (`lis -32074, addi -12192`). `XamNuiCameraTilt*` init does a 512-byte memset of it. It sits just before `G` = 0x82B5D2B0 = T+0x250. [seen]
+* **The XtSs block `B` = T+336 (0x82B5D1B0)**. It is persistent: the library writes the header before every GetStatus call and never clears the body. [seen]
+* Other T fields used below [seen]:
+  * T+36 = spinlock.
+  * T+44 = auto-tilt-started latch.
+  * T+48 = BOOL passed to RememberFloor.
+  * T+60 = "floor search done" flag.
+  * T+80 = operation state 0..8.
+  * T+84 = frame countdown.
+  * T+88 = retry counter.
+  * T+92 = analysis counter.
+  * T+96 / T+112 = two report records.
+  * T+100 = target angle (s32).
+  * T+380 = **cached copy of XtSs flags** (it is just B+0x2C).
+  * T+416 = kind of system request (0 none, 1/2/3).
+  * T+420 / T+424 = tick stamps. They are written but never read, so there is no time-based timeout.
+  * T+436..463 = 28-byte XConfig blob.
+  * T+464 = request flags.
+  * T+468 = embedded request block.
+  * T+496 = pointer to the pending request block.
+
+### 1. XamNuiCameraTiltSetCallback
+
+* **Called once**, from `sub_827658D8` (tilt init), which runs inside NuiInitialize-inner `sub_8276F640` (call at 0x8276FCF8, after the device init). [seen]
+* One argument: r3 = **0x82765538** (`sub_82765538`). The return value is ignored. [seen]
+* **What the callback is**: `HRESULT cb(u32 code, void* data)`. It is the channel through which **the system asks the running title to tilt** (for example a Kinect Tuner or Guide). It is not a "move finished" notification. [seen: switch on code; inf: purpose]
+  * `code - 0x2B005` is used as a switch index 0..6. [seen]
+    * **0x2B005**: `data` = `float*`. T+440 = T+104 = *data. Sets T+416 = 2 and starts an operation (`sub_82765028`). [seen]
+    * **0x2B009**: no data. Sets T+80 = 7, which is a cancel: the next frame completes the operation with 995 (ERROR_OPERATION_ABORTED). Returns 0. [seen]
+    * **0x2B00A**: `data` = `{u32 flags; float a; float b}`. Reads the XConfig, then sets T+416 = 1 and calls `sub_82765290(flags, tbl[flags&3]*C1, a, b, &T+128, &T+468)`, the full auto-tilt request. `tbl` = 4 floats at 0x82AE8C28. [seen]
+    * **0x2B00B**: `data` = `s32*`. T+444 = T+100 = *data, the angle in degrees. Sets T+416 = 3 and starts an operation. [seen]
+    * **0x2B006..0x2B008 and anything else**: returns 0x8000FFFF (E_UNEXPECTED). [seen]
+  * If an operation is already running (T+80 != 0) for codes 0x2B005/0x2B00A/0x2B00B, it reports status 6 (busy) through ReportStatus (see §6) and returns 0x80004005. Otherwise it returns 0. [seen]
+  * The callback zeroes T+468..T+496 before use and takes no lock. [seen]
+* **Emulator consequence**: Xenia never needs to invoke the callback unless it emulates the system tilt UI. Store the pointer and ignore it. [inf]
+
+### 2. XamNuiCameraTiltGetStatus
+
+* Signature as used: `HRESULT/NTSTATUS GetStatus(void* blk)`, one argument. Before each call the caller writes blk+0 = **0x50** and blk+4 = **0x58745373 'XtSs'**. blk is always `B` (T+336). [seen]
+* Call sites:
+  * **`sub_82766230`**: the per-frame tilt state machine. It is called by the per-depth-frame worker `sub_8276EDD8` (at 0x8276EF00) whenever G+8 != 0, so **once per processed depth frame**. [seen]
+  * **`sub_82765848`** ("get normal to gravity"). It is called:
+    * per skeleton-frame build in `sub_8276C020` (0x8276C35C), for vNormalToGravity;
+    * in states 3 and 6 of the state machine. [seen]
+  * So roughly 2-3 calls per frame. [inf]
+* Return value:
+  * `sub_82765848`: if < 0, the output vector is left at its default (0, c@0x820015C0, 0, 0), most likely (0, 1, 0, 0) [?]. The return value is passed to the caller, but `sub_8276C020` ignores it. [seen]
+  * `sub_82766230`:
+    * While an operation runs (T+80 not 0 and not 6), `result < 0` **or flags & 0x8** fails the operation with Win32 31 (ERROR_GEN_FAILURE). [seen]
+    * States 2, 4 and 6 additionally fail with 21 (ERROR_NOT_READY) on `result < 0`. [seen]
+    * When idle, failure is harmless. [seen]
+* **XtSs fields read** (only these; +0x08..+0x1F are never touched) [seen]:
+
+| off | type | use |
+|---|---|---|
+| +0x00 | u32 | written by the title = 0x50 |
+| +0x04 | u32 | written by the title = 'XtSs' |
+| +0x20,+0x24,+0x28 | 3 × s32 gx, gy, gz | current gravity. See below. |
+| +0x2C | u32 flags | 0x1 and 0x2 = moving (tested as `flags & 3`); 0x2 alone has an extra meaning; 0x4 = stalled; 0x8 = error; 0x10 = "force re-aim" (see below) |
+| +0x30..+0x3C | float4 | **remembered floor plane** (nx, ny, nz, d). +0x3C (d) != 0.0 is the library's test for "a floor is remembered". |
+| +0x40 | u32 | bit 0 set means the tilt is locked: the 0x2B00A request returns 5 (ERROR_ACCESS_DENIED) [seen]; meaning [inf] |
+| +0x44,+0x48,+0x4C | 3 × s32 | gravity at the time the floor was remembered |
+
+* **Gravity to vector** (`sub_82764F08`) [seen]:
+  * len = sqrt(gx² + gy² + gz²). If len == c@0x8200EDB0 (≈0), the result is the zero vector.
+  * Otherwise s = c@0x8200EDC0 / len (≈1/len), and the vector is **(-gx·s, gy·s, gz·s, c@0x8200092C)**, with w ≈ 0.
+  * The scale of the s32 values is irrelevant, since only ratios are used. [inf]
+* **Gravity to integer camera pitch** (start of `sub_82766230`) [seen]:
+  * `a = atan2(gz, gy)` (`sub_82A54518(f1 = +0x28, f2 = +0x24)`).
+  * `deg = trunc(floor(a · c@0x82041714 + c@0x82001C78))`. The constants are presumably 180/π and 0.5 [?].
+  * This `deg` (r26) is compared with the target angle: when |target − deg| > c@0x8200EDE8 (double), SetAngle(target) is sent again. **So the accelerometer must agree with the commanded elevation, or the library keeps nudging** (a bounded number of times per state; see §5). [seen/inf]
+  * A level camera evidently reads gx = gz = 0, gy > 0 (the default normal is (0, 1, 0)) [inf]. The sign of gz for an upward tilt is not determinable without the constants [?].
+* Validation: the title checks only the HRESULT sign and the flag bits. It does not check the returned size or the signature. [seen]
+
+### 3. vNormalToGravity / floor in the skeleton frame (Q8)
+
+* `sub_8276C020` (skeleton frame build, frame at r27+32). The frame layout matches NUI_SKELETON_FRAME: +0 timestamp, +8 frame number, +12 flags, +16 vFloorClipPlane, +32 vNormalToGravity. [inf]
+  * **+32 vNormalToGravity = `sub_82765848()`** = normalised (-gx, gy, gz, 0) from XtSs. [seen]
+  * If the tracker found no floor (w == 0) **and G+0 & 0x800**, the floor is taken from **`sub_82765A80`**, and frame flags |= 2. [seen]
+    * `sub_82765A80` takes the remembered plane B+0x30. Using the axis/angle between gravity-then (B+0x44) and gravity-now (B+0x20) (acos of the dot product, a cross product, and a 3x3 matrix from `sub_82765928`), it rotates the plane into the current camera pose and keeps d = B+0x3C. It returns 0 if the plane is zero. [seen]
+  * The floor plane's d (frame+28) is then multiplied by c@0x82051624. The same constant scales floor height in ReportStatus, which suggests mm → m [?].
+* NuiInitialize is called as `sub_8276FD88(27, 2)` from the game (ppc_recomp.0.cpp ~7590). If G+0 = 27, bits 0x800 and 0x04000000 are clear, so **the remembered-floor substitution is not used by this title, and the auto-tilt (§5) is enabled** [inf; G+0 = flags per kinect-pscam §7].
+* The main skeleton tracker `sub_8278E5A0` receives no gravity argument [seen in EDD8].
+  * Gravity reaches only the tilt helper `sub_8278E708` (player framing during auto-tilt). Its args are: depth buffer, &B+0x30, f1 = atan2 of the current gravity normal, f2 = atan2(B+0x4C, B+0x48) (`sub_82764938`), and a counter. [seen]
+  * `sub_82764AA8` also calls it with a null buffer on completion. [seen]
+* **While the motor moves (cached flags & 3), `sub_8276BCD0` resets the skeleton tracker every frame** (via `sub_8276BC58` → `sub_8278E558`). It is called from EDD8 each frame. **The emulator must not leave the moving bits set**, or tracking never starts. [seen]
+
+### 4. XamNuiCameraElevationSetAngle
+
+* One argument: r3 = **s32 angle in degrees**. The library wrapper `sub_82764C38` rejects |angle| > 27 with 0x80070057 without calling. [seen]
+* Call sites:
+  * via the wrapper: 2 calls in `sub_82765290` and 8 in `sub_82766230`;
+  * direct: `sub_82765028` calls **SetAngle(−25)**. [seen]
+* **The return value is ignored everywhere** (the wrapper returns it, and no caller reads r3). [seen]
+* All callers are inside the NUI library: **the game itself never tilts**. Tilting happens only in the library's one-shot auto-tilt and in system requests. [seen]
+* Before each call, T+420 = tick count (never read). [seen]
+* Completion is detected by polling `XtSs` flags once per frame, not by the callback and not by time [seen]:
+  * `flags & 3` → keep waiting (no limit);
+  * `flags & 4` → fail with 25. The completion path maps 25 to report status 4 and calls **StopMovement** (see §6). In state 6 with request flag 0x20, it calls StopMovement and continues instead;
+  * `flags & 8` → fail with 31.
+* After motion stops: wait 15 frames (state 5), then analyse a frame, then possibly one corrective SetAngle (state 3), then wait again (state 6). [seen]
+
+### 5. Auto-tilt flow (library-initiated, once)
+
+* Trigger, in `sub_82766230` [seen]: G+8 != 0, not moving, and T+44 == 0. Under the lock:
+  * if G+0 & 0x04000000, the latch is set and nothing happens;
+  * else if T+80 == 0, it latches, prepares request block T+468, calls `sub_82765028` and reads the XConfig (`sub_82764E68`).
+* `sub_82765028` sets state 2 and a 60-frame countdown. It calls **SetAngle(−25) and sets T+48 = 1** when flags & 0x10 is set, or when no floor is remembered (B+0x3C == 0) and T+60 == 0. [seen]
+* `sub_82764E68` calls `ExGetXConfigSetting(7, 9, &T+436, 28, &sz)`. On failure the defaults are used. T+440 (float) is clamped from below; T+444 (s32) is used as an angle offset. [seen] (not a requested import, noted for completeness)
+* State machine on T+80 [seen]:
+
+| state | does |
+|---|---|
+| 2 | Wait while moving. 0x4 → 25. If a floor is remembered: wait 14 frames, compute the target (`sub_82764CC8`, ±27 clamp), re-SetAngle if the accelerometer is off, then go to state 4. If no floor: count down, then, while retries T+88 > 0 and current deg < 0, SetAngle(23 − 10·n) and wait 60 frames (a sweep). Then set T+60 = 1. |
+| 4 | Wait while moving; 0x4 → 25; then go to 5 with 15 frames. |
+| 5 | Count down, then go to 3. |
+| 3 | Needs a depth frame. Gets gravity, runs `sub_8278E708`, possibly a corrective SetAngle(deg − delta, ±27), then goes to 6. |
+| 6 | Wait while moving; stalled → 25 or StopMovement; final analysis; complete with T+432 (0/1). |
+| 7 | Complete with 995 (cancelled by 0x2B009). |
+| 8 | Set by `sub_82764BC0` at worker exit, which completes with 1223. |
+
+* Completion `sub_82764AA8(code)` [seen]:
+  * takes the pending block;
+  * logs `sub_8278E708(0, ...)`;
+  * stores code to block+0, SetEvents block+12, calls block+16 (`cb(code, 0, block)`);
+  * then `sub_82764988(code)` → ReportStatus.
+* The auto-tilt runs once per NuiInitialize. Failure is not fatal: no retry, and the game is unaffected apart from the report. [seen/inf]
+
+### 6. XamNuiCameraTiltReportStatus, ElevationStopMovement
+
+* **ReportStatus(u32 code, void* rec)**: 2 arguments, return value ignored. [seen]
+  * code **0x2B006** with rec = T+96 = {+0 u32 status, +4 s32 target angle (T+100), +8 float (T+104), +12 float floorHeight = B+0x3C · c@0x82051624}.
+  * code **0x2B00C** with rec = T+112 = {+0 u32 status, +4..+12 unused (0), +16 float = B+0x3C · c@0x82051624}.
+  * Record sizes 16 and 20 bytes [inf].
+* Which code is used depends on T+416 [seen]:
+  * 1 (the 0x2B00A request) → 0x2B00C;
+  * 2/3 → 0x2B006;
+  * 0 (the library's own auto-tilt) → report only when status == 3, using 0x2B006.
+* Status mapping in `sub_82764988` [seen]:
+
+| completion code | reported status |
+|---|---|
+| 0 | 0 |
+| 5 | 8 |
+| 21 | 2 |
+| 25 | 4 (plus StopMovement) |
+| 4 | 4 (plus StopMovement) |
+| 31 | 5 |
+| 995 | 7 |
+| other | passed through (for example 1223) |
+
+  * Status **6** = busy (from the callback). Status **3** = movement while flags & 2 (in `sub_827650B8`: target reset to 0, T+60 = 0, T+68 = 1) [seen]. Meaning of flag 0x2 "moved externally" [?].
+* **ElevationStopMovement()**: no meaningful arguments (r3 holds leftovers), return value ignored. Called from `sub_82764988` (codes 4/25) and from state 6 on a stall. [seen]
+* Emulator: ReportStatus can be a no-op that returns 0. [inf]
+
+### 7. XamNuiCameraElevationGetAngle
+
+* **One call**, in `sub_82765290` (the 0x2B00A system request only): `GetAngle(s32* angle, ?* second)` = (&sp+80, &sp+84). [seen]
+* The return value is ignored. Only *angle is read: it is compared with the target T+100 (re-SetAngle if the difference > c@0x8200EDE8). The second output is never read. [seen]
+* Not used in the normal game flow. [seen]
+
+### 8. XamNuiCameraRememberFloor
+
+* Called only from `sub_827650B8` (per frame, from state machine entry, with r30 = worker+32 = the tracker's floor plane), and only when not moving (cached flags & 3 == 0) and the plane is valid. [seen]
+  * "Valid" means w != 0 and dot(plane.xyz, gravity unit vector) >= c@0x82098F18 (`sub_82764FB8`). [seen]
+* **Arguments: the float4 plane passed by value in GPRs**: r3 = 64-bit load of (nx, ny), r4 = 64-bit load of (nz, d) (high word first), r5 = BOOL T+48. [seen]
+  * T+48 = 1 only for the first remember after the library's own SetAngle(−25). It is reset to 0 after each call. [seen]
+* When it is called [seen]:
+  * immediately if state == 2 (an operation just started);
+  * otherwise after the same plane has been seen unchanged for 60 consecutive frames, and then on every further unchanged frame, because the counter is not reset after the call.
+* The return value is ignored. [seen]
+* Expected system behaviour: store the plane into XtSs +0x30..+0x3C and current gravity into +0x44..+0x4C. That is where the library later reads them back, and B+0x3C != 0 changes the auto-tilt path. [inf]
+
+### 9. XamNuiGetDeviceStatus (game side, not the NUI library)
+
+Signature: `GetDeviceStatus(16-byte buf)`. Only **+0xC status_bits** is ever read; +0, +4 and +8 are never read. [seen]
+
+* **`sub_824D0D70`**: calls it with a stack buffer and **returns +0xC, ignoring the call's return value**. If the import does not write +0xC, the result is stack garbage, so always write it. [seen]
+  * `sub_82232D48` (game manager init, once): byte [mgr+32547] = bits & 1, byte [mgr+32548] = (bits>>1) & 1. [seen]
+  * `sub_82438930`: if (bits & 3) == 3 → `sub_8290B100` [seen] (purpose [?], runs under a critical section in 0x82B76690 code).
+  * `sub_8290E228`: feeds bits as the param of a synthetic **0x00060019** (kXNotificationSystemNUIHardwareStatusChanged) to a listener `sub_8290E138` for the initial state. [seen]
+* The live update comes from XNotify 0x60019 in `sub_82233040` [seen]:
+  * param bit 0 → +32547;
+  * bit 1 → +32548. On a 0→1 change with extra conditions, this calls `sub_8290B100`;
+  * a bit 0 change to 0 → pause/menu handling: the virtual calls and state 1140/1144 changes. [seen]
+* **+32547 (bit 0) gates Kinect gameplay processing** [seen]:
+  * `sub_82222908`, `sub_82233470`, `sub_82233980`, `sub_82236FC8` and `sub_82495860` skip their work when it is 0.
+  * So **bit 0 = "Kinect connected/ready"** [inf]. Bit 1 is a second "ready" condition [?].
+* **`sub_8290F188`** (stats/telemetry object 0x82B76690 path, from `sub_8290F9F0`): at most once per 60 000 ms. If the call returns == 0, obj byte0 = (bits >> 3) & 1 (**bit 0x8**). Otherwise nothing. [seen] Meaning [?].
+* No "connect Kinect" UI call was found next to these sites. The device-lost path goes through the 0x60019 notification handler. [seen/inf]
+
+### 10. XamNuiGetDeviceSerialNumber
+
+* `sub_8290F0C0(obj)`, once (latched by obj+32). It is skipped if `XamVoiceGetMicArrayStatus()` == 2.
+* Otherwise it calls `GetDeviceSerialNumber(obj, 17)`, i.e. (char* buf, u32 size = 17). If the result is < 0, the 17 bytes are zero-filled. Not fatal; it is telemetry. [seen]
+
+### 11. XamXStudioRequest
+
+* No call in the tilt or device-status code. [seen]
+* The codes found are 1, 769, 770, 4099 and 4100 (kinect-pscam §0), plus 5122 (`sub_8276FF90`, a skeleton-frame record), 5121 (`sub_82770428`) and 6 / 5378 (`sub_82777C88`). None relate to tilt. [seen]
+
+### 12. Constants by address (values not visible in recomp)
+
+| address | use | guess |
+|---|---|---|
+| 0x82051624 | floor d scale and report float | 0.001 |
+| 0x8200092C | the "zero" compare value everywhere | 0.0 |
+| 0x820015C0 | default normal y | 1.0 |
+| 0x82041714 | rad→deg | 57.2958 |
+| 0x82001C78 (double) | rounding | 0.5 |
+| 0x8200EDE8 (double) | angle tolerance for re-SetAngle | unknown |
+| 0x8200EDB0 / 0x8200EDC0 (double) | normalisation constants | 0 / 1 |
+| 0x82098F18 | floor-normal · gravity threshold | unknown |
+| 0x82AE8C28 | float[4] for 0x2B00A flags & 3 | unknown |
+| 0x82062074 / 0x82098F14 | XConfig height clamp and default | unknown |
+
+### 13. Minimal emulation (derived)
+
+* TiltSetCallback: store the pointer, return 0.
+* TiltGetStatus: accept the 0x50/'XtSs' block and return 0.
+  * Fill gravity with gy > 0 and gz chosen so that round(atan2(gz, gy)·180/π) equals the current elevation. The sign is to be confirmed by watching whether the library re-sends SetAngle.
+  * Set flags = 0 except for a short "moving" window after SetAngle.
+  * Store RememberFloor's plane and the gravity at that moment into +0x30/+0x44.
+* SetAngle: clamp to ±27, update the elevation, return 0. StopMovement / ReportStatus: return 0. GetAngle: write *angle, return 0.
+* GetDeviceStatus: return 0 and **always write +0xC**. Bits 0 and 1 set means Kinect usable; also broadcast 0x60019 with the same bits on changes.
+
+### Open questions
+
+1. Sign convention of gz (and of gx, which the library negates) relative to positive SetAngle. Needs the constants or a run-time check.
+2. Values of the tolerance 0x8200EDE8 and the floor-dot threshold 0x82098F18.
+3. Exact meaning of XtSs flag 0x2 (vs 0x1), 0x10 and +0x40 bit 0; and whether the real system fills +0x30..+0x4C only after RememberFloor.
+4. status_bits bit 1 and bit 3 meanings; what `sub_8290B100` does.
+5. Whether game code (outside the NUI library) reads vNormalToGravity / vFloorClipPlane from the skeleton frame. Not traced.
+6. G+0 really equals 27 (confirm that F640 does not OR in 0x800 or 0x04000000).
