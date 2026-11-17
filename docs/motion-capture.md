@@ -260,6 +260,18 @@ not ported. While writing them:
 The user's own files are ported under BSD-3-Clause by the user's decision to
 bring them here.
 
+### 6.1 The guest camera driver (PsCam) is rewritten too
+
+**Decision (2026-11-17, YuutaTsubasa):** `PsCamDeviceRequest` is not taken
+from knuckleslee's `kinect-v1-stage1` branch (BSD) either; it is written
+here from our own tracing. The request codes and reply formats are worked
+out from how a title's NUI library calls the driver (the guest code, read
+locally and never committed), and written down in
+[kinect-pscam.md](kinect-pscam.md) with where each fact was seen. The public
+description of xenia-canary#1274 names some codes; it is used only as a
+pointer for where to look, and every fact in our notes is checked against
+the guest code. The branch's code is not opened.
+
 Third-party pieces:
 
 | Piece | License | Fit with BSD | Note |
@@ -271,7 +283,7 @@ Third-party pieces:
 | RTMPose (OpenMMLab) | Apache-2.0 (code and released weights) | yes | check the weight's model card again before shipping |
 | Kinect for Windows SDK 1.8 / 2.0 | Microsoft proprietary | not redistributed | loaded at runtime (`LoadLibrary`); the user installs the SDK. Free Riders declares the few structs it uses by hand. |
 | UsbDk | Apache-2.0 | not bundled | the user installs it for raw USB |
-| knuckleslee's `kinect-v1-stage1` (raw USB v1, PsCam request codes) | BSD-3-Clause (Xenia headers) | yes | legally reusable with credit; whether to build on it or coordinate with them is your call |
+| knuckleslee's `kinect-v1-stage1` (raw USB v1, PsCam request codes) | BSD-3-Clause (Xenia headers) | yes | not used: rewritten (§6.1) |
 
 ## 7. Things the tracker needs that are not about devices
 
@@ -308,9 +320,9 @@ and is one commit (or a few) with a plain message.
 ## 9. Open questions
 
 - ~~Licensing (§6)~~: decided 2026-11-17, rewrite.
-- Whether to build the guest side on knuckleslee's `kinect-v1-stage1`
-  request-code work or redo it; and whether to talk to knuckleslee and
-  ryantimjohn first so the efforts don't collide upstream.
+- ~~Whether to build the guest side on knuckleslee's `kinect-v1-stage1`~~:
+  decided 2026-11-17, rewrite (§6.1). Still open: whether to talk to
+  knuckleslee and ryantimjohn first so the efforts don't collide upstream.
 - Whether the console's tracker accepts a webcam's drawn depth body.
 - Test titles: which ones the person in Free-Riders-Recompiled#421 will try
   first, and what logs to ask for.
