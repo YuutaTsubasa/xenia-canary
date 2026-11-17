@@ -314,11 +314,35 @@ and is one commit (or a few) with a plain message.
    `depth_reprojection.*`), with unit tests on drawn scenes.
 6. `PsCamDeviceRequest` guest side fed by the virtual v1 (depends on the
    decision about knuckleslee's request-code work).
-7. Kinect v2 backend (SDK 2.0).
+7. Kinect v2 backend (SDK 2.0). Done 2026-11-18, depth only, not yet run
+   on hardware; see §8.1.
 8. Virtual tilt (`DetroitDeviceRequest`, `XamNuiCameraTilt*`), device status
    from the motion system instead of the console-settings flag.
 9. Kinect v1 backends (SDK 1.8; raw USB).
 10. Webcam capture and pose model; synthetic depth (experimental).
+
+### 8.1 The Kinect v2 backend as written
+
+- `kinect_v2_sdk.h` declares the six SDK interfaces it calls, in the SDK
+  2.0 header's vtable order (checked by script against a public copy of
+  `Kinect.h`), so building needs no SDK. `Kinect20.dll` comes from the free
+  Kinect for Windows Runtime 2.0 and is loaded only when chosen.
+- A capture thread owns every runtime object (COM, multithreaded). It
+  waits for the sensor and its depth-to-camera table, then polls the depth
+  reader and publishes 512x424 millimetres plus per-pixel rays.
+- Directions come from the table, not a lens model, so mirroring of the
+  SDK's images does not matter. The table is in SDK camera space (+X to the
+  sensor's left, +Y up); lens space negates both (`kinect_v2_frames.cc`,
+  with tests). This relies on the v1 picture being unmirrored (docs/
+  kinect-pscam.md §11), which is inferred from tracing, not seen on a real
+  console.
+- The v2 is treated as sitting exactly where the v1 would (identity
+  pose). The small offset between the two sensors' depth cameras is not
+  modelled; `CameraPose` is there if a real test shows it matters.
+- `Open()` runs on the first camera query, which comes from a guest
+  thread, and can block it up to 5 seconds while the sensor starts.
+- Still to do: colour, bodies or floor plane (not needed by the title's
+  own tracker), and a first run with a real Kinect v2.
 
 ## 9. Open questions
 
@@ -327,5 +351,8 @@ and is one commit (or a few) with a plain message.
   decided 2026-11-17, rewrite (§6.1). Still open: whether to talk to
   knuckleslee and ryantimjohn first so the efforts don't collide upstream.
 - Whether the console's tracker accepts a webcam's drawn depth body.
+- The v2 axis handling (§8.1) and whether the title tracks from
+  reprojected v2 depth at all: needs a real Kinect v2 (the PC this was
+  written on has none).
 - Test titles: which ones the person in Free-Riders-Recompiled#421 will try
   first, and what logs to ask for.
