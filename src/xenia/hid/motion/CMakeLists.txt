@@ -23,12 +23,26 @@ add_library(xenia-hid-motion STATIC
   ${CMAKE_CURRENT_SOURCE_DIR}/synthetic_depth.cc
   ${CMAKE_CURRENT_SOURCE_DIR}/pose_estimator.h
   ${CMAKE_CURRENT_SOURCE_DIR}/pose_estimator.cc
+  ${CMAKE_CURRENT_SOURCE_DIR}/webcam_capture.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/webcam_pixels.cc
 )
 if(WIN32)
   target_sources(xenia-hid-motion PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/kinect_v2_sdk.h
     ${CMAKE_CURRENT_SOURCE_DIR}/kinect_v2_device.h
     ${CMAKE_CURRENT_SOURCE_DIR}/kinect_v2_device.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/webcam_capture_win.cc
+  )
+  # Media Foundation's GUIDs (a static library; its functions are looked up
+  # at run time, see webcam_capture_win.cc).
+  target_link_libraries(xenia-hid-motion PRIVATE mfuuid)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  target_sources(xenia-hid-motion PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/webcam_capture_v4l2.cc
+  )
+else()
+  target_sources(xenia-hid-motion PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/webcam_capture_none.cc
   )
 endif()
 target_link_libraries(xenia-hid-motion PUBLIC xenia-base)
