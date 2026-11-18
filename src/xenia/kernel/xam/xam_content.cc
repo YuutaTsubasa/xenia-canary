@@ -7,9 +7,11 @@
  ******************************************************************************
  */
 
+#include "xenia/base/filesystem.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/math.h"
 #include "xenia/base/string_util.h"
+#include "xenia/emulator.h"
 #include "xenia/kernel/info/file.h"
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/smc.h"
@@ -23,6 +25,7 @@
 #include "xenia/kernel/xenumerator.h"
 #include "xenia/ui/imgui_dialog.h"
 #include "xenia/ui/imgui_drawer.h"
+#include "xenia/vfs/devices/host_path_entry.h"
 #include "xenia/vfs/devices/stfs_xbox.h"
 #include "xenia/xbox.h"
 
@@ -515,12 +518,110 @@ dword_result_t XamContentCreateInternal_entry(
 }
 DECLARE_XAM_EXPORT1(XamContentCreateInternal, kContent, kImplemented);
 
+// The host file holding the package at `guest_path`: the file itself when
+// it is on the host already, otherwise a copy in the host cache (made once,
+// and again only if the size changed). Empty if there is no such file.
+static std::filesystem::path HostFileForPackage(std::string_view guest_path) {
+  auto entry = kernel_state()->file_system()->ResolvePath(guest_path);
+  if (!entry || (entry->attributes() & vfs::kFileAttributeDirectory)) {
+    return {};
+  }
+  if (auto host_entry = dynamic_cast<vfs::HostPathEntry*>(entry)) {
+    return host_entry->host_path();
+  }
+
+  std::filesystem::path copy_path =
+      kernel_state()->emulator()->cache_root() / "content_files" /
+      fmt::format("{:08X}", kernel_state()->title_id()) /
+      xe::to_path(entry->name());
+  std::error_code error;
+  if (std::filesystem::file_size(copy_path, error) == entry->size()) {
+    return copy_path;
+  }
+  std::filesystem::create_directories(copy_path.parent_path(), error);
+
+  vfs::File* file = nullptr;
+  if (entry->Open(vfs::FileAccess::kFileReadData, &file) != X_STATUS_SUCCESS ||
+      !file) {
+    return {};
+  }
+  bool copied = false;
+  if (FILE* out = xe::filesystem::OpenFile(copy_path, "wb")) {
+    std::vector<uint8_t> buffer(1024 * 1024);
+    size_t offset = 0;
+    copied = true;
+    while (offset < entry->size()) {
+      size_t read = 0;
+      if (file->ReadSync(buffer, offset, &read) != X_STATUS_SUCCESS || !read ||
+          fwrite(buffer.data(), 1, read, out) != read) {
+        copied = false;
+        break;
+      }
+      offset += read;
+    }
+    fclose(out);
+  }
+  file->Destroy();
+  if (!copied) {
+    std::filesystem::remove(copy_path, error);
+    return {};
+  }
+  return copy_path;
+}
+
+// Opens a content package that is a file of its own, such as one on the
+// disc, and mounts it under `root_name` until XamContentClose. Kinect titles
+// use it for the NUI libraries' data: the skeleton tracker's
+// "stexemplar" (Database.xmplr) and the speech models ("nuispeech",
+// nuisp<language>); NuiInitialize fails without the former. A title tries
+// "update:\" first, then "game:\".
 dword_result_t XamContentOpenFile_entry(
     dword_t user_index, lpstring_t root_name, lpstring_t path, dword_t flags,
     lpdword_t disposition_ptr, lpdword_t license_mask_ptr,
     pointer_t<XAM_OVERLAPPED> overlapped_ptr) {
-  // TODO(gibbed): arguments assumed based on XamContentCreate.
-  return X_ERROR_FILE_NOT_FOUND;
+  // Arguments as XamContentCreate's, with a path in place of the content
+  // data; only opening an existing package is supported.
+  if (!root_name || !path) {
+    return X_ERROR_INVALID_PARAMETER;
+  }
+  auto content_manager = kernel_state()->content_manager();
+  X_RESULT result;
+  uint32_t content_license = 0;
+  if (content_manager->IsContentOpen(root_name.value())) {
+    result = X_ERROR_ALREADY_EXISTS;
+  } else {
+    std::filesystem::path host_path = HostFileForPackage(path.value());
+    ContentPackage* package = host_path.empty()
+                                  ? nullptr
+                                  : content_manager->OpenAndMountPackage(
+                                        host_path, root_name.value(), "");
+    if (package) {
+      content_license = package->GetContentMetadata().license_mask;
+      result = X_ERROR_SUCCESS;
+      XELOGI("XamContentOpenFile: mounted {} as {}:", path.value(),
+             root_name.value());
+    } else {
+      result = X_ERROR_FILE_NOT_FOUND;
+      XELOGD("XamContentOpenFile: no package at {}", path.value());
+    }
+  }
+
+  if (disposition_ptr) {
+    *disposition_ptr = static_cast<uint32_t>(result ? kDispositionState::Unknown
+                                                    : kDispositionState::Open);
+  }
+  if (license_mask_ptr && !result) {
+    *license_mask_ptr = content_license;
+  }
+  if (overlapped_ptr) {
+    kernel_state()->CompleteOverlappedImmediateEx(
+        overlapped_ptr, result ? X_ERROR_FUNCTION_FAILED : X_ERROR_SUCCESS,
+        X_HRESULT_FROM_WIN32(result),
+        static_cast<uint32_t>(result ? kDispositionState::Unknown
+                                     : kDispositionState::Open));
+    return X_ERROR_IO_PENDING;
+  }
+  return result;
 }
 DECLARE_XAM_EXPORT1(XamContentOpenFile, kContent, kStub);
 
