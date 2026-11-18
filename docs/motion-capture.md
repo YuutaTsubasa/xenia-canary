@@ -322,6 +322,7 @@ and is one commit (or a few) with a plain message.
    `DetroitDeviceRequest`); see §8.2.
 9. Kinect v1 backends (SDK 1.8; raw USB).
 10. Webcam capture and pose model; synthetic depth (experimental).
+    Done 2026-11-18, not yet run with a real camera or a title; see §8.3.
 
 ### 8.1 The Kinect v2 backend as written
 
@@ -363,13 +364,59 @@ From the fourth trace (kinect-pscam.md §13):
   e.g. from a tuner UI, which Xenia does not have), a real v1 motor, and
   `DetroitDeviceRequest` for titles that import it.
 
+### 8.3 The webcam backend as written
+
+`motion_device = webcam` (or `auto`, after a Kinect v2 that does not
+start) runs this on a "Webcam" thread for each picture:
+
+1. `webcam_capture_*`: an RGBA picture, about 640x480. Windows: Media
+   Foundation's source reader, which converts and decodes for us; written
+   anew from Microsoft's documentation. Its functions are looked up at run
+   time so Windows N still starts. Linux: V4L2, ported from the user's
+   Free Riders code (syntax-checked only). Setting: `webcam_device` (part
+   of the name; empty for the first).
+2. `pose_estimator`: MediaPipe's person detector and pose landmarker
+   (OpenCV Zoo's ONNX conversions, Apache-2.0) run by ONNX Runtime 1.30 or
+   newer. The runtime and both models are **not shipped**: they are looked
+   for in `motion_pose_folder` (default `pose` beside the executable). The
+   headers are in `third_party/onnxruntime`; the library is loaded at run
+   time. Windows 11 carries an ONNX Runtime 1.17 in System32, which is
+   reported as too old rather than used.
+3. `pose_smoothing`: the 1 Euro filter.
+4. `pose_skeleton`: 17 points to 20 joints; every player at the same size
+   (shoulders 0.36 m) and distance (2.5 m). Setting: `webcam_mirrored`.
+5. `body_placement`: sideways and up/down from where the hips are in the
+   picture (setting: `webcam_fov`, default 60 degrees); the usual
+   hip-to-feet drop stood on the floor.
+6. `synthetic_depth`: the body drawn as capsules in a bare room (floor
+   0.9 m below the sensor, wall at 3.8 m) through the virtual v1's lens.
+   A lost player stays 0.3 s, then the room is empty.
+
+The frame also carries the picture (with a pinhole lens as wide as
+`webcam_fov`), the skeleton and the drawn floor.
+
+Steps 1-4 come from Free Riders Recompiled files the user wrote alone
+(checked with `git blame`); 5 and 6 and the Windows capture are new. Not
+ported: Free Riders' older RTMPose path and its menu-hand stability
+filter (knuckleslee's).
+
+Checked so far: every step's unit tests; the real models load and run
+under ONNX Runtime 1.30. Not yet: a real webcam (the test opens one only
+when `XENIA_TEST_WEBCAM` is set), a title's tracker reading the drawn
+body, the virtual tilt turning the drawn view (`SyntheticRoom` can, but
+the device does not hear the angle yet), and Linux.
+
 ## 9. Open questions
 
 - ~~Licensing (§6)~~: decided 2026-11-17, rewrite.
 - ~~Whether to build the guest side on knuckleslee's `kinect-v1-stage1`~~:
   decided 2026-11-17, rewrite (§6.1). Still open: whether to talk to
   knuckleslee and ryantimjohn first so the efforts don't collide upstream.
-- Whether the console's tracker accepts a webcam's drawn depth body.
+- Whether the console's tracker accepts a webcam's drawn depth body
+  (§8.3), and whether its body sizes and room need tuning for it.
+- How the player gets ONNX Runtime and the two models (§8.3): a script
+  like Free Riders' `fetch_pose_model.py` (that one is partly
+  knuckleslee's, so it would be written anew), or instructions.
 - The v2 axis handling (§8.1) and whether the title tracks from
   reprojected v2 depth at all: needs a real Kinect v2 (the PC this was
   written on has none).
