@@ -15,6 +15,8 @@ add_library(xenia-hid-motion STATIC
   ${CMAKE_CURRENT_SOURCE_DIR}/pose_landmarks.h
   ${CMAKE_CURRENT_SOURCE_DIR}/pose_skeleton.h
   ${CMAKE_CURRENT_SOURCE_DIR}/pose_skeleton.cc
+  ${CMAKE_CURRENT_SOURCE_DIR}/pose_smoothing.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/pose_smoothing.cc
 )
 if(WIN32)
   target_sources(xenia-hid-motion PRIVATE
