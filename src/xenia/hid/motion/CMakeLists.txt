@@ -21,6 +21,8 @@ add_library(xenia-hid-motion STATIC
   ${CMAKE_CURRENT_SOURCE_DIR}/pose_mediapipe.cc
   ${CMAKE_CURRENT_SOURCE_DIR}/synthetic_depth.h
   ${CMAKE_CURRENT_SOURCE_DIR}/synthetic_depth.cc
+  ${CMAKE_CURRENT_SOURCE_DIR}/pose_estimator.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/pose_estimator.cc
 )
 if(WIN32)
   target_sources(xenia-hid-motion PRIVATE
@@ -30,6 +32,10 @@ if(WIN32)
   )
 endif()
 target_link_libraries(xenia-hid-motion PUBLIC xenia-base)
+if(NOT WIN32)
+  # dlopen, for ONNX Runtime (pose_estimator.cc).
+  target_link_libraries(xenia-hid-motion PRIVATE ${CMAKE_DL_LIBS})
+endif()
 xe_target_defaults(xenia-hid-motion)
 
 if(XENIA_BUILD_TESTS)
