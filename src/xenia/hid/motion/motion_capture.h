@@ -28,10 +28,11 @@ enum class MotionDeviceKind : uint8_t {
   kKinectV1,
   kKinectV2,
   kWebcam,
+  kTest,  // no hardware: one player standing still (test_device.h)
 };
 
 // Reads the option's text ("none", "auto", "kinect_v1", "kinect_v2",
-// "webcam"); false for anything else.
+// "webcam", "test"); false for anything else.
 bool ParseMotionDeviceKind(const std::string& text, MotionDeviceKind& kind);
 const char* MotionDeviceKindName(MotionDeviceKind kind);
 

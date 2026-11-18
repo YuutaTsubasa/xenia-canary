@@ -13,6 +13,7 @@
 #include "xenia/base/logging.h"
 #include "xenia/base/platform.h"
 
+#include "xenia/hid/motion/test_device.h"
 #include "xenia/hid/motion/webcam_device.h"
 
 #if XE_PLATFORM_WIN32
@@ -21,7 +22,9 @@
 
 DEFINE_string(motion_device, "none",
               "Motion-capture device Kinect titles see as their Kinect camera. "
-              "Use: [none, auto, kinect_v1, kinect_v2, webcam]",
+              "Use: [none, auto, kinect_v1, kinect_v2, webcam, test]. test: no "
+              "hardware, one player standing still, to see how far a title "
+              "gets.",
               "HID");
 
 namespace xe {
@@ -38,6 +41,7 @@ bool ParseMotionDeviceKind(const std::string& text, MotionDeviceKind& kind) {
       {"kinect_v1", MotionDeviceKind::kKinectV1},
       {"kinect_v2", MotionDeviceKind::kKinectV2},
       {"webcam", MotionDeviceKind::kWebcam},
+      {"test", MotionDeviceKind::kTest},
   };
   for (const auto& name : kNames) {
     if (text == name.text) {
@@ -60,6 +64,8 @@ const char* MotionDeviceKindName(MotionDeviceKind kind) {
       return "kinect_v2";
     case MotionDeviceKind::kWebcam:
       return "webcam";
+    case MotionDeviceKind::kTest:
+      return "test";
   }
   return "unknown";
 }
@@ -88,6 +94,10 @@ MotionCaptureSystem::CreateDevices() {
 #endif
   if (any || kind_ == MotionDeviceKind::kWebcam) {
     devices.push_back(std::make_unique<WebcamDevice>());
+  }
+  // Never chosen by auto: it is there only when asked for.
+  if (kind_ == MotionDeviceKind::kTest) {
+    devices.push_back(std::make_unique<TestMotionDevice>());
   }
   if (devices.empty() && kind_ != MotionDeviceKind::kNone) {
     XELOGW("Motion capture: motion_device = {} is not available in this build",

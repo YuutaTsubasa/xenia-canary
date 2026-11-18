@@ -29,6 +29,8 @@ add_library(xenia-hid-motion STATIC
   ${CMAKE_CURRENT_SOURCE_DIR}/webcam_pixels.cc
   ${CMAKE_CURRENT_SOURCE_DIR}/webcam_device.h
   ${CMAKE_CURRENT_SOURCE_DIR}/webcam_device.cc
+  ${CMAKE_CURRENT_SOURCE_DIR}/test_device.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/test_device.cc
 )
 if(WIN32)
   target_sources(xenia-hid-motion PRIVATE
