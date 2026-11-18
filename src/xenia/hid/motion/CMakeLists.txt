@@ -12,6 +12,9 @@ add_library(xenia-hid-motion STATIC
   ${CMAKE_CURRENT_SOURCE_DIR}/virtual_tilt.cc
   ${CMAKE_CURRENT_SOURCE_DIR}/kinect_v2_frames.h
   ${CMAKE_CURRENT_SOURCE_DIR}/kinect_v2_frames.cc
+  ${CMAKE_CURRENT_SOURCE_DIR}/pose_landmarks.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/pose_skeleton.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/pose_skeleton.cc
 )
 if(WIN32)
   target_sources(xenia-hid-motion PRIVATE
