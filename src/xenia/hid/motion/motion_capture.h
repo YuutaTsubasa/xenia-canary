@@ -13,6 +13,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <vector>
 
 #include "xenia/hid/motion/motion_device.h"
 
@@ -60,8 +61,9 @@ class MotionCaptureSystem {
   bool GetNewestFrame(SensorFrame& frame);
 
  private:
-  // The backend for kind_, or a NullMotionDevice when this build has none.
-  std::unique_ptr<MotionDevice> CreateDevice();
+  // The backends to try for kind_, in order (auto lists every one this
+  // build has); empty when this build has none.
+  std::vector<std::unique_ptr<MotionDevice>> CreateDevices();
 
   std::mutex lock_;
   MotionDeviceKind kind_ = MotionDeviceKind::kNone;

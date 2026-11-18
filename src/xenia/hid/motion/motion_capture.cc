@@ -13,6 +13,8 @@
 #include "xenia/base/logging.h"
 #include "xenia/base/platform.h"
 
+#include "xenia/hid/motion/webcam_device.h"
+
 #if XE_PLATFORM_WIN32
 #include "xenia/hid/motion/kinect_v2_device.h"
 #endif
@@ -73,38 +75,41 @@ MotionCaptureSystem::MotionCaptureSystem() {
 
 MotionCaptureSystem::~MotionCaptureSystem() { Reset(); }
 
-std::unique_ptr<MotionDevice> MotionCaptureSystem::CreateDevice() {
+std::vector<std::unique_ptr<MotionDevice>>
+MotionCaptureSystem::CreateDevices() {
   // Backends are added here one by one (docs/motion-capture.md, commit
-  // plan). Auto takes the first that exists in this build.
-  switch (kind_) {
-    case MotionDeviceKind::kAuto:
-    case MotionDeviceKind::kKinectV2:
+  // plan). Auto tries every one this build has, a Kinect before the webcam.
+  std::vector<std::unique_ptr<MotionDevice>> devices;
+  bool any = kind_ == MotionDeviceKind::kAuto;
 #if XE_PLATFORM_WIN32
-      return std::make_unique<KinectV2Device>();
-#else
-      break;
-#endif
-    default:
-      break;
+  if (any || kind_ == MotionDeviceKind::kKinectV2) {
+    devices.push_back(std::make_unique<KinectV2Device>());
   }
-  if (kind_ != MotionDeviceKind::kNone) {
+#endif
+  if (any || kind_ == MotionDeviceKind::kWebcam) {
+    devices.push_back(std::make_unique<WebcamDevice>());
+  }
+  if (devices.empty() && kind_ != MotionDeviceKind::kNone) {
     XELOGW("Motion capture: motion_device = {} is not available in this build",
            MotionDeviceKindName(kind_));
   }
-  return std::make_unique<NullMotionDevice>();
+  return devices;
 }
 
 bool MotionCaptureSystem::Acquire() {
   std::lock_guard<std::mutex> guard(lock_);
   if (!tried_) {
     tried_ = true;
-    device_ = CreateDevice();
-    open_ = device_->Open();
-    if (kind_ != MotionDeviceKind::kNone) {
-      MotionStatus status = device_->status();
-      XELOGI("Motion capture: {} {}{}{}", device_->name(),
+    for (auto& device : CreateDevices()) {
+      open_ = device->Open();
+      MotionStatus status = device->status();
+      XELOGI("Motion capture: {} {}{}{}", device->name(),
              open_ ? "running" : "not running",
              status.reason.empty() ? "" : ": ", status.reason);
+      device_ = std::move(device);
+      if (open_) {
+        break;
+      }
     }
   }
   return open_;
