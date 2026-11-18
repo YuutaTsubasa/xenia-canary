@@ -13,6 +13,7 @@
 #include <chrono>
 #include <cstring>
 #include <span>
+#include <string>
 
 #include "xenia/base/logging.h"
 #include "xenia/cpu/processor.h"
@@ -75,6 +76,36 @@ enum PsCamStream : uint32_t {
 
 // How often the worker looks for a new device frame when nothing wakes it.
 constexpr auto kWorkerPollInterval = std::chrono::milliseconds(5);
+// Depth reads waiting this long with no new device frame are logged once.
+using Clock = std::chrono::steady_clock;
+constexpr auto kStallWarning = std::chrono::seconds(3);
+
+const char* RequestName(uint32_t request) {
+  switch (request) {
+    case kRequestGetState:
+      return "get state";
+    case kRequestStop:
+      return "stop";
+    case kRequestReadFrame:
+      return "read frame";
+    case kRequestCalibrationOld:
+      return "calibration";
+    case kRequestVersion:
+      return "version";
+    case kRequestDepthTable:
+      return "depth table";
+    case kRequestTiming:
+      return "timing";
+    case kRequestStart:
+      return "start";
+    case kRequestUnknown33:
+      return "unknown 33";
+    case kRequestColourSettings:
+      return "colour settings";
+    default:
+      return "not handled";
+  }
+}
 
 hid::motion::MotionCaptureSystem* MotionSystem(KernelState* kernel_state) {
   auto input_system = kernel_state->emulator()->input_system();
@@ -118,7 +149,32 @@ X_STATUS KinectCamera::Request(uint32_t block) {
   auto* words =
       kernel_state_->memory()->TranslateVirtual<xe::be<uint32_t>*>(block);
   const uint32_t request = words[0];
+  X_STATUS result = HandleRequest(block, request, words);
 
+  // The first time each request comes, and every start and stop: enough for
+  // a tester's log to show how far the title got with the camera.
+  bool log = request == kRequestStart || request == kRequestStop;
+  {
+    std::lock_guard<std::mutex> guard(lock_);
+    if (request < request_logged_.size() && !request_logged_[request]) {
+      request_logged_[request] = true;
+      log = true;
+    }
+  }
+  if (log) {
+    if (request == kRequestGetState) {
+      XELOGI("Kinect camera: title asked for the camera state, answered {}",
+             uint32_t(words[1]));
+    } else {
+      XELOGI("Kinect camera: title sent request {} ({}), answered {:08X}",
+             request, RequestName(request), uint32_t(result));
+    }
+  }
+  return result;
+}
+
+X_STATUS KinectCamera::HandleRequest(uint32_t block, uint32_t request,
+                                     xe::be<uint32_t>* words) {
   if (request == kRequestGetState) {
     // No device: state 0, and the title carries on without Kinect, as it
     // does on a console with nothing plugged in.
@@ -223,6 +279,10 @@ X_STATUS KinectCamera::QueueFrameRead(uint32_t block, xe::be<uint32_t>* words) {
     if (stream == kStreamDepth) {
       depth_reads_.push_back(block);
     } else {
+      if (!colour_read_logged_) {
+        colour_read_logged_ = true;
+        XELOGI("Kinect camera: title queued its first colour frame read");
+      }
       // Colour reads wait until the colour format is known (Bayer or YUV,
       // docs/kinect-pscam.md section 11); they are cancelled when the
       // camera stops. The title tracks from depth alone.
@@ -272,6 +332,29 @@ void KinectCamera::WorkerMain() {
         want_depth = !depth_reads_.empty();
       }
     }
+    auto now = Clock::now();
+    if (!want_depth || last_depth_frame_ == Clock::time_point()) {
+      last_depth_frame_ = now;
+    } else if (!stall_logged_ && now - last_depth_frame_ > kStallWarning) {
+      stall_logged_ = true;
+      auto motion = MotionSystem(kernel_state_);
+      std::string reason =
+          motion ? motion->status().reason : std::string("no motion system");
+      XELOGW(
+          "Kinect camera: the title has waited {} s for a depth frame and the "
+          "device sent none ({})",
+          std::chrono::duration_cast<std::chrono::seconds>(kStallWarning)
+              .count(),
+          reason.empty() ? std::string("the device says it is running")
+                         : reason);
+    }
+    if (!cancelled.empty() && !cancel_logged_) {
+      cancel_logged_ = true;
+      XELOGI(
+          "Kinect camera: cancelled {} frame reads because the camera is not "
+          "started",
+          cancelled.size());
+    }
     for (uint32_t block : cancelled) {
       CompleteRead(block, kStatusCancelled, 0);
     }
@@ -284,6 +367,7 @@ void KinectCamera::WorkerMain() {
       continue;  // no new depth yet
     }
     delivered_frame_ = frame_.number;
+    last_depth_frame_ = now;
     uint32_t block;
     {
       std::lock_guard<std::mutex> guard(lock_);
@@ -294,9 +378,20 @@ void KinectCamera::WorkerMain() {
       depth_reads_.pop_front();
     }
     if (FillDepthRead(block)) {
+      if (!depth_frame_logged_) {
+        depth_frame_logged_ = true;
+        XELOGI(
+            "Kinect camera: first depth frame handed to the title ({}x{} from "
+            "the device, {} bodies seen)",
+            frame_.depth.width, frame_.depth.height, frame_.bodies.size());
+      }
       CompleteRead(block, X_STATUS_SUCCESS,
                    uint32_t(hid::motion::kV1DepthFrameBytes));
     } else {
+      if (!depth_failure_logged_) {
+        depth_failure_logged_ = true;
+        XELOGW("Kinect camera: a depth frame did not fit the title's buffer");
+      }
       CompleteRead(block, kStatusLengthMismatch, 0);
     }
   }

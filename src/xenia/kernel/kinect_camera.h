@@ -10,7 +10,9 @@
 #ifndef XENIA_KERNEL_KINECT_CAMERA_H_
 #define XENIA_KERNEL_KINECT_CAMERA_H_
 
+#include <array>
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
@@ -58,6 +60,8 @@ class KinectCamera {
   hid::motion::VirtualTilt& tilt() { return tilt_; }
 
  private:
+  X_STATUS HandleRequest(uint32_t block, uint32_t request,
+                         xe::be<uint32_t>* words);
   X_STATUS ReplyDepthTable(xe::be<uint32_t>* words);
   X_STATUS ReplyTiming(xe::be<uint32_t>* words);
   X_STATUS ReplyCalibration(xe::be<uint32_t>* words);
@@ -87,6 +91,17 @@ class KinectCamera {
   hid::motion::SensorFrame frame_;
   uint64_t delivered_frame_ = 0;
   uint32_t frame_number_ = 0;
+
+  // For the log, so a tester's xenia.log shows how far a title got with the
+  // camera: each request code is logged the first time it comes (under
+  // lock_), and the worker logs its first frame and a stall once.
+  std::array<bool, 64> request_logged_ = {};
+  bool colour_read_logged_ = false;
+  bool depth_frame_logged_ = false;
+  bool depth_failure_logged_ = false;
+  bool stall_logged_ = false;
+  bool cancel_logged_ = false;
+  std::chrono::steady_clock::time_point last_depth_frame_ = {};
 };
 
 }  // namespace kernel

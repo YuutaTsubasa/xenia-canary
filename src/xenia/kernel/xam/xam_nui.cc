@@ -7,6 +7,7 @@
  ******************************************************************************
  */
 
+#include <atomic>
 #include <cstring>
 #include "xenia/base/logging.h"
 #include "xenia/emulator.h"
@@ -67,7 +68,15 @@ dword_result_t XamNuiGetDeviceStatus_entry(
     // Titles read only status_bits, whatever the result (docs/
     // kinect-pscam.md section 13): bit 0 gates their Kinect play, and bits 0
     // and 1 together are what they keep as "usable".
-    if (!camera->CameraPresent()) {
+    const bool present = camera->CameraPresent();
+    // Logged the first time and whenever it changes, so a tester's log shows
+    // what the title was told.
+    static std::atomic<int> last_logged = -1;
+    if (last_logged.exchange(int(present)) != int(present)) {
+      XELOGI("XamNuiGetDeviceStatus: told the title the Kinect is {}",
+             present ? "connected and ready" : "not connected");
+    }
+    if (!present) {
       status_ptr->camera_status = 0xC000009D;  // STATUS_DEVICE_NOT_CONNECTED
       status_ptr->tilt_status = 0xC000009D;
       return 0xC0050006;
@@ -173,6 +182,11 @@ dword_result_t XamNuiCameraTiltGetStatus_entry(
     }
     tilt_status->flags = X_TILT_STATUS_FLAGS(0);
     tilt_status->lock_flags = 0;
+    static std::atomic<bool> logged = false;
+    if (!logged.exchange(true)) {
+      XELOGI("XamNuiCameraTiltGetStatus: first answer, motor at {} degrees",
+             camera->tilt().angle());
+    }
     return X_ERROR_SUCCESS;
   }
   // TODO(knuckleslee): Report the Kinect accelerometer and motor status.
@@ -224,6 +238,8 @@ dword_result_t XamNuiCameraElevationSetAngle_entry(int_t degrees) {
       degrees > hid::motion::kV1TiltMaxDegrees) {
     return X_E_INVALIDARG;
   }
+  XELOGI("XamNuiCameraElevationSetAngle: title turned the motor to {} degrees",
+         int32_t(degrees));
   camera->tilt().SetAngle(degrees);
   return X_ERROR_SUCCESS;
 }
@@ -253,6 +269,8 @@ dword_result_t XamNuiCameraRememberFloor_entry(qword_t plane_xy,
     return value;
   };
   uint64_t xy = plane_xy, zd = plane_zd;
+  XELOGI("XamNuiCameraRememberFloor: title remembered a floor (first: {})",
+         uint32_t(first));
   camera->tilt().RememberFloor(
       {to_float(uint32_t(xy >> 32)), to_float(uint32_t(xy)),
        to_float(uint32_t(zd >> 32)), to_float(uint32_t(zd))});
