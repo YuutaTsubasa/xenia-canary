@@ -21,6 +21,8 @@ add_library(xenia-hid-motion STATIC
   ${CMAKE_CURRENT_SOURCE_DIR}/pose_mediapipe.cc
   ${CMAKE_CURRENT_SOURCE_DIR}/synthetic_depth.h
   ${CMAKE_CURRENT_SOURCE_DIR}/synthetic_depth.cc
+  ${CMAKE_CURRENT_SOURCE_DIR}/body_placement.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/body_placement.cc
   ${CMAKE_CURRENT_SOURCE_DIR}/pose_estimator.h
   ${CMAKE_CURRENT_SOURCE_DIR}/pose_estimator.cc
   ${CMAKE_CURRENT_SOURCE_DIR}/webcam_capture.h
