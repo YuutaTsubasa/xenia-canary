@@ -9,7 +9,17 @@
 
 #include "xenia/hid/motion/test_device.h"
 
+#include <cmath>
+
+#include "xenia/base/cvar.h"
 #include "xenia/hid/motion/synthetic_depth.h"
+
+DEFINE_bool(motion_test_raise_hand, false,
+            "With motion_device = test, the player raises the right hand in "
+            "front of them for 8 s out of every 12 s and moves it slowly "
+            "from side to side, as a player does to bring up a Kinect hand "
+            "cursor.",
+            "HID");
 
 namespace xe {
 namespace hid {
@@ -51,7 +61,11 @@ bool TestMotionDevice::GetNewestFrame(SensorFrame& frame) {
   }
   SyntheticRoom room;
   room.tilt_degrees = view_tilt_;
-  Body player = StandingPlayer();
+  Body player =
+      cvars::motion_test_raise_hand
+          ? RaisingHandPlayer(
+                std::chrono::duration<double>(now - opened_at_).count())
+          : StandingPlayer();
   frame = SensorFrame();
   frame.number = number;
   frame.captured_at = now;
@@ -91,6 +105,26 @@ Body TestMotionDevice::StandingPlayer() {
   put(Joint::kKneeRight, 0.1f, -0.45f);
   put(Joint::kAnkleRight, 0.1f, -0.82f);
   put(Joint::kFootRight, 0.1f, -0.855f, 2.42f);
+  return body;
+}
+
+Body TestMotionDevice::RaisingHandPlayer(double seconds) {
+  Body body = StandingPlayer();
+  // Standing for the first 4 s of every 12 s.
+  double in_cycle = std::fmod(seconds, 12.0);
+  if (in_cycle < 4.0) {
+    return body;
+  }
+  auto put = [&](Joint joint, float x, float y, float z) {
+    body.joints[size_t(joint)] = {x, y, z};
+  };
+  // The right hand held up in front, at shoulder height and about half a
+  // metre nearer the sensor than the body, swaying 15 cm to each side every
+  // 4 s.
+  float sway = 0.15f * float(std::sin((in_cycle - 4.0) * 3.14159265 / 2.0));
+  put(Joint::kElbowRight, 0.24f + sway * 0.5f, 0.42f, 2.25f);
+  put(Joint::kWristRight, 0.26f + sway, 0.52f, 2.0f);
+  put(Joint::kHandRight, 0.26f + sway, 0.56f, 1.95f);
   return body;
 }
 

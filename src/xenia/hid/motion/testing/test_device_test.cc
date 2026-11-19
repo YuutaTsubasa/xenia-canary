@@ -36,4 +36,31 @@ TEST_CASE("The test device is always there and sees one player",
   REQUIRE_FALSE(device.GetNewestFrame(again));
 }
 
+TEST_CASE("The test player raises a hand in front of them now and then",
+          "[motion][test_device]") {
+  Body standing = TestMotionDevice::StandingPlayer();
+  // Standing for the first 4 s.
+  Body early = TestMotionDevice::RaisingHandPlayer(1.0);
+  REQUIRE(early.joints == standing.joints);
+  // Then the right hand is up at the shoulder, nearer the sensor.
+  for (double seconds : {5.0, 8.0, 11.5, 17.0}) {
+    Body up = TestMotionDevice::RaisingHandPlayer(seconds);
+    const auto& hand = up.joints[size_t(Joint::kHandRight)];
+    const auto& shoulder = up.joints[size_t(Joint::kShoulderRight)];
+    REQUIRE(hand[1] > shoulder[1]);
+    REQUIRE(hand[2] < shoulder[2] - 0.4f);
+    // The left hand stays down.
+    REQUIRE(up.joints[size_t(Joint::kHandLeft)] ==
+            standing.joints[size_t(Joint::kHandLeft)]);
+  }
+  // And it moves from side to side.
+  float x5 = TestMotionDevice::RaisingHandPlayer(5.0)
+                 .joints[size_t(Joint::kHandRight)][0];
+  float x7 = TestMotionDevice::RaisingHandPlayer(7.0)
+                 .joints[size_t(Joint::kHandRight)][0];
+  REQUIRE(x5 - x7 > 0.25f);
+  // And comes down again at the start of the next 12 s.
+  REQUIRE(TestMotionDevice::RaisingHandPlayer(13.0).joints == standing.joints);
+}
+
 }  // namespace xe::hid::motion::test

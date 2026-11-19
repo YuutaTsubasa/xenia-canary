@@ -25,7 +25,8 @@ namespace motion {
 // still 2.5 m ahead, 30 times a second, drawn as a depth picture like the
 // webcam's (synthetic_depth). Whether a title's own tracker finds that
 // player is not the point; whether the title gets as far as asking is.
-// motion_device = test.
+// motion_device = test; with motion_test_raise_hand the player also raises a
+// hand now and then (RaisingHandPlayer).
 class TestMotionDevice final : public MotionDevice {
  public:
   const char* name() const override { return "test"; }
@@ -40,6 +41,10 @@ class TestMotionDevice final : public MotionDevice {
   // The player it sees, in room space (feet on the floor below a sensor
   // 0.9 m up).
   static Body StandingPlayer();
+  // The same player `seconds` after the device opened, when it raises a
+  // hand: standing for 4 s, then the right hand up in front for 8 s, swaying
+  // from side to side, over and over.
+  static Body RaisingHandPlayer(double seconds);
 
  private:
   std::chrono::steady_clock::time_point opened_at_ = {};
