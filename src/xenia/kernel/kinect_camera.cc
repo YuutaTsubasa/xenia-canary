@@ -394,6 +394,7 @@ void KinectCamera::WorkerMain() {
     }
     if (FillDepthRead(block)) {
       ReportDepth(now);
+      ReportTilt();
       if (!depth_frame_logged_) {
         depth_frame_logged_ = true;
         XELOGI(
@@ -419,6 +420,7 @@ bool KinectCamera::FillDepthRead(uint32_t block) {
   auto memory = kernel_state_->memory();
   auto* words = memory->TranslateVirtual<xe::be<uint32_t>*>(block);
   const hid::motion::DepthImage* depth = &frame_.depth;
+  filled_angle_ = tilt_.angle();
   if (depth->width != hid::motion::kV1DepthWidth ||
       depth->height != hid::motion::kV1DepthHeight) {
     // Another camera's picture: seen again through the v1's lens, from the
@@ -461,32 +463,54 @@ void KinectCamera::ReportDepth(Clock::time_point now) {
       int(summary.with_reading * 100.0f + 0.5f), summary.nearest_mm,
       summary.middle_mm, summary.nearer_than_3m);
   frames_since_report_ = 0;
+  SaveDepthPicture(*title_depth_, fmt::format("{:02}_game", depth_reports_));
+  if (title_depth_ != &frame_.depth) {
+    SaveDepthPicture(frame_.depth,
+                     fmt::format("{:02}_device", depth_reports_));
+  }
+}
+
+void KinectCamera::ReportTilt() {
+  if (!title_depth_ || filled_angle_ == shown_angle_) {
+    ++frames_at_angle_;
+    return;
+  }
+  auto summary = hid::motion::SummarizeDepth(*title_depth_);
+  XELOGI(
+      "Kinect camera: the motor moved from {} to {} degrees after {} frames; "
+      "the game's picture now has a reading in {}% of pixels, middle {} mm",
+      shown_angle_, filled_angle_, frames_at_angle_,
+      int(summary.with_reading * 100.0f + 0.5f), summary.middle_mm);
+  SaveDepthPicture(*title_depth_,
+                   fmt::format("tilt_{}_game", filled_angle_));
+  shown_angle_ = filled_angle_;
+  frames_at_angle_ = 1;
+}
+
+void KinectCamera::SaveDepthPicture(const hid::motion::DepthImage& depth,
+                                    const std::string& name) {
   if (!cvars::motion_save_depth_pictures) {
+    return;
+  }
+  std::vector<uint8_t> bitmap = hid::motion::DepthToBitmap(depth);
+  if (bitmap.empty()) {
     return;
   }
   std::filesystem::path folder =
       kernel_state_->emulator()->storage_root() / "kinect_depth";
   std::error_code error;
   std::filesystem::create_directories(folder, error);
-  auto save = [&](const hid::motion::DepthImage& depth, const char* what) {
-    std::vector<uint8_t> bitmap = hid::motion::DepthToBitmap(depth);
-    if (bitmap.empty()) {
-      return;
-    }
-    auto path = folder / fmt::format("{:02}_{}.bmp", depth_reports_, what);
-    std::ofstream file(path, std::ios::binary | std::ios::trunc);
-    file.write(reinterpret_cast<const char*>(bitmap.data()),
-               std::streamsize(bitmap.size()));
-    if (!file) {
-      XELOGW("Kinect camera: could not save {}", xe::path_to_utf8(path));
-    } else if (depth_reports_ == 1) {
-      XELOGI("Kinect camera: saving depth pictures in {}",
-             xe::path_to_utf8(folder));
-    }
-  };
-  save(*title_depth_, "game");
-  if (title_depth_ != &frame_.depth) {
-    save(frame_.depth, "device");
+  if (!saving_logged_) {
+    saving_logged_ = true;
+    XELOGI("Kinect camera: saving depth pictures in {}",
+           xe::path_to_utf8(folder));
+  }
+  auto path = folder / (name + ".bmp");
+  std::ofstream file(path, std::ios::binary | std::ios::trunc);
+  file.write(reinterpret_cast<const char*>(bitmap.data()),
+             std::streamsize(bitmap.size()));
+  if (!file) {
+    XELOGW("Kinect camera: could not save {}", xe::path_to_utf8(path));
   }
 }
 

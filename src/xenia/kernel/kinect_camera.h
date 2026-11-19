@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <deque>
 #include <mutex>
+#include <string>
 
 #include "xenia/base/byte_order.h"
 #include "xenia/hid/motion/motion_types.h"
@@ -75,6 +76,14 @@ class KinectCamera {
   // Every 10 s for the first two minutes of depth: a log line on what the
   // title was given, and with motion_save_depth_pictures the pictures.
   void ReportDepth(std::chrono::steady_clock::time_point now);
+  // When the virtual motor's angle changed since the last frame: a log
+  // line on how many frames the title got at the old angle, and with
+  // motion_save_depth_pictures the first picture at the new one.
+  void ReportTilt();
+  // With motion_save_depth_pictures: `depth` as <name>.bmp in the
+  // kinect_depth folder.
+  void SaveDepthPicture(const hid::motion::DepthImage& depth,
+                        const std::string& name);
   void CompleteRead(uint32_t block, X_STATUS status, uint32_t bytes);
 
   KernelState* kernel_state_;
@@ -114,6 +123,12 @@ class KinectCamera {
   std::chrono::steady_clock::time_point first_depth_at_ = {};
   uint32_t depth_reports_ = 0;
   uint32_t frames_since_report_ = 0;
+  // Worker-only, for ReportTilt: the motor angle the last picture was made
+  // at, the one before it, and how many frames went at that one.
+  int32_t filled_angle_ = 0;
+  int32_t shown_angle_ = 0;
+  uint32_t frames_at_angle_ = 0;
+  bool saving_logged_ = false;
 };
 
 }  // namespace kernel
