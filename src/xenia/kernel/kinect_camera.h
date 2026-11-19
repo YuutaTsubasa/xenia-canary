@@ -72,6 +72,9 @@ class KinectCamera {
   void StartWorker();
   void WorkerMain();
   bool FillDepthRead(uint32_t block);
+  // Every 10 s for the first two minutes of depth: a log line on what the
+  // title was given, and with motion_save_depth_pictures the pictures.
+  void ReportDepth(std::chrono::steady_clock::time_point now);
   void CompleteRead(uint32_t block, X_STATUS status, uint32_t bytes);
 
   KernelState* kernel_state_;
@@ -102,6 +105,15 @@ class KinectCamera {
   bool stall_logged_ = false;
   bool cancel_logged_ = false;
   std::chrono::steady_clock::time_point last_depth_frame_ = {};
+
+  // Worker-only, for ReportDepth: the picture the title got last (the
+  // device's own or reprojected_), when depth started and how many frames
+  // went since the last report.
+  hid::motion::DepthImage reprojected_;
+  const hid::motion::DepthImage* title_depth_ = nullptr;
+  std::chrono::steady_clock::time_point first_depth_at_ = {};
+  uint32_t depth_reports_ = 0;
+  uint32_t frames_since_report_ = 0;
 };
 
 }  // namespace kernel

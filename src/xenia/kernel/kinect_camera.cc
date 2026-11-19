@@ -12,18 +12,30 @@
 #include <array>
 #include <chrono>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <span>
 #include <string>
 
+#include "xenia/base/cvar.h"
+#include "xenia/base/filesystem.h"
 #include "xenia/base/logging.h"
 #include "xenia/cpu/processor.h"
 #include "xenia/emulator.h"
 #include "xenia/hid/input_system.h"
+#include "xenia/hid/motion/depth_picture.h"
 #include "xenia/hid/motion/motion_capture.h"
 #include "xenia/hid/motion/virtual_kinect_v1.h"
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/xthread.h"
 #include "xenia/memory.h"
+
+DEFINE_bool(motion_save_depth_pictures, false,
+            "Save what the Kinect camera hands the game as pictures: every "
+            "10 s for the first two minutes, in the kinect_depth folder next "
+            "to the log, the device's own depth and the depth the game got "
+            "(.bmp, near is light). For sending with a report.",
+            "HID");
 
 namespace xe {
 namespace kernel {
@@ -79,6 +91,9 @@ constexpr auto kWorkerPollInterval = std::chrono::milliseconds(5);
 // Depth reads waiting this long with no new device frame are logged once.
 using Clock = std::chrono::steady_clock;
 constexpr auto kStallWarning = std::chrono::seconds(3);
+// How often, and how many times, ReportDepth runs.
+constexpr auto kDepthReportInterval = std::chrono::seconds(10);
+constexpr uint32_t kDepthReports = 12;
 
 const char* RequestName(uint32_t request) {
   switch (request) {
@@ -378,6 +393,7 @@ void KinectCamera::WorkerMain() {
       depth_reads_.pop_front();
     }
     if (FillDepthRead(block)) {
+      ReportDepth(now);
       if (!depth_frame_logged_) {
         depth_frame_logged_ = true;
         XELOGI(
@@ -402,15 +418,15 @@ void KinectCamera::WorkerMain() {
 bool KinectCamera::FillDepthRead(uint32_t block) {
   auto memory = kernel_state_->memory();
   auto* words = memory->TranslateVirtual<xe::be<uint32_t>*>(block);
-  hid::motion::DepthImage reprojected;
   const hid::motion::DepthImage* depth = &frame_.depth;
   if (depth->width != hid::motion::kV1DepthWidth ||
       depth->height != hid::motion::kV1DepthHeight) {
     // Another camera's picture: seen again through the v1's lens, from the
     // same place.
-    reprojected = hid::motion::ReprojectToV1Depth(frame_.depth);
-    depth = &reprojected;
+    reprojected_ = hid::motion::ReprojectToV1Depth(frame_.depth);
+    depth = &reprojected_;
   }
+  title_depth_ = depth;
   auto* buffer = memory->TranslateVirtual<uint8_t*>(words[kReadBuffer]);
   if (!hid::motion::EncodeV1DepthFrame(
           *depth, std::span<uint8_t>(buffer, words[kReadLength]))) {
@@ -420,6 +436,58 @@ bool KinectCamera::FillDepthRead(uint32_t block) {
     *memory->TranslateVirtual<xe::be<uint32_t>*>(info) = ++frame_number_;
   }
   return true;
+}
+
+void KinectCamera::ReportDepth(Clock::time_point now) {
+  if (depth_reports_ >= kDepthReports || !title_depth_) {
+    return;
+  }
+  if (first_depth_at_ == Clock::time_point()) {
+    first_depth_at_ = now;
+  }
+  ++frames_since_report_;
+  if (now - first_depth_at_ < kDepthReportInterval * (depth_reports_ + 1)) {
+    return;
+  }
+  ++depth_reports_;
+  auto summary = hid::motion::SummarizeDepth(*title_depth_);
+  XELOGI(
+      "Kinect camera: depth report {}/{}: {} frames in the last {} s; the "
+      "game's picture has a reading in {}% of pixels, nearest {} mm, middle "
+      "{} mm, {} pixels nearer than 3 m",
+      depth_reports_, kDepthReports, frames_since_report_,
+      std::chrono::duration_cast<std::chrono::seconds>(kDepthReportInterval)
+          .count(),
+      int(summary.with_reading * 100.0f + 0.5f), summary.nearest_mm,
+      summary.middle_mm, summary.nearer_than_3m);
+  frames_since_report_ = 0;
+  if (!cvars::motion_save_depth_pictures) {
+    return;
+  }
+  std::filesystem::path folder =
+      kernel_state_->emulator()->storage_root() / "kinect_depth";
+  std::error_code error;
+  std::filesystem::create_directories(folder, error);
+  auto save = [&](const hid::motion::DepthImage& depth, const char* what) {
+    std::vector<uint8_t> bitmap = hid::motion::DepthToBitmap(depth);
+    if (bitmap.empty()) {
+      return;
+    }
+    auto path = folder / fmt::format("{:02}_{}.bmp", depth_reports_, what);
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    file.write(reinterpret_cast<const char*>(bitmap.data()),
+               std::streamsize(bitmap.size()));
+    if (!file) {
+      XELOGW("Kinect camera: could not save {}", xe::path_to_utf8(path));
+    } else if (depth_reports_ == 1) {
+      XELOGI("Kinect camera: saving depth pictures in {}",
+             xe::path_to_utf8(folder));
+    }
+  };
+  save(*title_depth_, "game");
+  if (title_depth_ != &frame_.depth) {
+    save(frame_.depth, "device");
+  }
 }
 
 // Finishes a read the way the title expects (section 0): callback(block,
