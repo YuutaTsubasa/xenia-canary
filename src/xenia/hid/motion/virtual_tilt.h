@@ -34,8 +34,9 @@ constexpr int32_t kV1AccelerometerCountsPerG = 819;
 // (the library resets its skeleton tracker while the motor reports moving,
 // so this one arrives at once and never reports moving), the accelerometer
 // agrees with that angle (otherwise the library sends the angle again), and
-// a floor it asked to remember is given back. The camera picture itself does
-// not tilt.
+// a floor it asked to remember is given back. The picture turns with the
+// angle too (the camera code does that, not this class): the title tilts
+// down to find the floor, and the floor has to come into view when it does.
 //
 // Safe to use from any thread.
 class VirtualTilt {

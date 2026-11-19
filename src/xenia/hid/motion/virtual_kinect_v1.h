@@ -52,6 +52,13 @@ CameraIntrinsics V1DepthLens();
 DepthImage ReprojectToV1Depth(const DepthImage& source,
                               const CameraPose& pose = {});
 
+// Where a virtual v1 tilted `degrees` above level stands relative to a
+// level camera at the same place: turned about the lens's x axis, so that
+// tilting down (negative) brings what was below the picture into it. For
+// ReprojectToV1Depth, so the virtual tilt motor turns the virtual v1's view
+// inside another device's wider picture.
+CameraPose V1TiltPose(float degrees);
+
 // Request code 24's table: one entry per raw depth value 0..8191.
 constexpr size_t kV1DepthTableEntries = 8192;
 

@@ -377,6 +377,10 @@ void KinectCamera::WorkerMain() {
       continue;
     }
     auto motion = MotionSystem(kernel_state_);
+    if (motion) {
+      // A device that draws its own picture turns it with the motor.
+      motion->SetViewTilt(float(tilt_.angle()));
+    }
     if (!motion || !motion->GetNewestFrame(frame_) ||
         frame_.number == delivered_frame_ || frame_.depth.empty()) {
       continue;  // no new depth yet
@@ -424,8 +428,12 @@ bool KinectCamera::FillDepthRead(uint32_t block) {
   if (depth->width != hid::motion::kV1DepthWidth ||
       depth->height != hid::motion::kV1DepthHeight) {
     // Another camera's picture: seen again through the v1's lens, from the
-    // same place.
-    reprojected_ = hid::motion::ReprojectToV1Depth(frame_.depth);
+    // same place, turned as far as the virtual motor is. A real v1 looks
+    // down at the floor when the title tilts it; the device does not move,
+    // but its picture is taller than the v1's, so the virtual v1 can look
+    // further down inside it.
+    reprojected_ = hid::motion::ReprojectToV1Depth(
+        frame_.depth, hid::motion::V1TiltPose(float(filled_angle_)));
     depth = &reprojected_;
   }
   title_depth_ = depth;

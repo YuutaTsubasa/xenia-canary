@@ -60,6 +60,8 @@ class MotionCaptureSystem {
   MotionCapabilities capabilities();
   MotionStatus status();
   bool GetNewestFrame(SensorFrame& frame);
+  // Passes the virtual tilt motor's angle on (MotionDevice::SetViewTilt).
+  void SetViewTilt(float degrees);
 
  private:
   // The backends to try for kind_, in order (auto lists every one this

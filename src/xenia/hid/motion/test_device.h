@@ -12,6 +12,8 @@
 
 #include <chrono>
 
+#include <atomic>
+
 #include "xenia/hid/motion/motion_device.h"
 
 namespace xe {
@@ -33,6 +35,7 @@ class TestMotionDevice final : public MotionDevice {
   MotionCapabilities capabilities() const override;
   MotionStatus status() const override;
   bool GetNewestFrame(SensorFrame& frame) override;
+  void SetViewTilt(float degrees) override { view_tilt_ = degrees; }
 
   // The player it sees, in room space (feet on the floor below a sensor
   // 0.9 m up).
@@ -40,6 +43,7 @@ class TestMotionDevice final : public MotionDevice {
 
  private:
   std::chrono::steady_clock::time_point opened_at_ = {};
+  std::atomic<float> view_tilt_ = 0.0f;
 };
 
 }  // namespace motion

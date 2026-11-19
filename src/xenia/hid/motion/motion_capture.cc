@@ -150,6 +150,13 @@ bool MotionCaptureSystem::GetNewestFrame(SensorFrame& frame) {
   return open_ && device_->GetNewestFrame(frame);
 }
 
+void MotionCaptureSystem::SetViewTilt(float degrees) {
+  std::lock_guard<std::mutex> guard(lock_);
+  if (open_) {
+    device_->SetViewTilt(degrees);
+  }
+}
+
 }  // namespace motion
 }  // namespace hid
 }  // namespace xe

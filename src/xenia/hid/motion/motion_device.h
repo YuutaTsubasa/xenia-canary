@@ -42,6 +42,12 @@ class MotionDevice {
   // Degrees above level.
   virtual bool SetTilt(float degrees) { return false; }
   virtual bool GetTilt(float& degrees) { return false; }
+  // For devices that draw their own picture as the virtual Kinect v1 sees
+  // it (synthetic_depth): the angle the virtual tilt motor is at, degrees
+  // above level, so the drawn view turns with it. Devices that hand over a
+  // real camera's picture ignore it; the camera code turns that picture
+  // when it moves it into the virtual v1 instead.
+  virtual void SetViewTilt(float degrees) {}
 };
 
 // The device used when none is chosen: never opens, never has a frame.

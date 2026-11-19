@@ -10,6 +10,8 @@
 #include "xenia/hid/motion/virtual_kinect_v1.h"
 
 #include <algorithm>
+#include <cmath>
+#include <numbers>
 
 #include "xenia/base/byte_order.h"
 
@@ -30,6 +32,16 @@ DepthImage ReprojectToV1Depth(const DepthImage& source,
                               const CameraPose& pose) {
   return ReprojectDepth(source, V1DepthLens(), kV1DepthWidth, kV1DepthHeight,
                         pose);
+}
+
+CameraPose V1TiltPose(float degrees) {
+  const float angle = degrees * std::numbers::pi_v<float> / 180.0f;
+  const float c = std::cos(angle), s = std::sin(angle);
+  // Lens space has +y down: a camera tilted up sees what was straight
+  // ahead lower in its picture (y' = y cos + z sin).
+  CameraPose pose;
+  pose.rotation = {1, 0, 0, 0, c, s, 0, -s, c};
+  return pose;
 }
 
 void FillV1DepthTable(std::span<uint16_t, kV1DepthTableEntries> table) {

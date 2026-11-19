@@ -214,6 +214,7 @@ void WebcamDevice::Capture() {
       placement.Forget();
     }
 
+    room.tilt_degrees = view_tilt_;
     DepthImage depth = DrawSyntheticDepth(have_body ? &body : nullptr, room);
     {
       std::lock_guard<std::mutex> guard(lock_);

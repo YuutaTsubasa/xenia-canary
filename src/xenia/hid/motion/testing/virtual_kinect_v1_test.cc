@@ -8,6 +8,7 @@
  */
 
 #include <array>
+#include <cmath>
 #include <vector>
 
 #include "xenia/hid/motion/virtual_kinect_v1.h"
@@ -84,6 +85,30 @@ TEST_CASE("V1 depth frame rejects the wrong size",
   std::vector<uint8_t> short_frame(kV1DepthFrameBytes - 2);
   REQUIRE_FALSE(EncodeV1DepthFrame(
       MakeDepth(kV1DepthWidth, kV1DepthHeight, 1000), short_frame));
+}
+
+TEST_CASE("A tilted virtual v1 looks up or down", "[motion][virtual_kinect_v1]") {
+  auto turn = [](const CameraPose& pose, std::array<float, 3> p) {
+    const auto& r = pose.rotation;
+    return std::array<float, 3>{r[0] * p[0] + r[1] * p[1] + r[2] * p[2],
+                                r[3] * p[0] + r[4] * p[1] + r[5] * p[2],
+                                r[6] * p[0] + r[7] * p[1] + r[8] * p[2]};
+  };
+  // Level: nothing moves.
+  auto same = turn(V1TiltPose(0.0f), {0.1f, 0.2f, 1.0f});
+  REQUIRE(same[1] == Approx(0.2f));
+  REQUIRE(same[2] == Approx(1.0f));
+
+  // 25 degrees below straight ahead (lens +y is down): straight ahead for a
+  // v1 tilted 25 degrees down, and further down still for one tilted up.
+  const float below = std::tan(25.0f * 3.14159265f / 180.0f);
+  auto down = turn(V1TiltPose(-25.0f), {0.0f, below, 1.0f});
+  REQUIRE(down[1] == Approx(0.0f).margin(1e-5));
+  REQUIRE(down[2] > 0.0f);
+  auto up = turn(V1TiltPose(10.0f), {0.0f, below, 1.0f});
+  REQUIRE(up[1] / up[2] > below);
+  // x is the axis it turns about.
+  REQUIRE(turn(V1TiltPose(-25.0f), {0.3f, 0.0f, 1.0f})[0] == Approx(0.3f));
 }
 
 }  // namespace xe::hid::motion::test

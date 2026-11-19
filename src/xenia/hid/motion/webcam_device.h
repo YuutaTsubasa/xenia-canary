@@ -53,6 +53,8 @@ class WebcamDevice final : public MotionDevice {
 
   std::thread thread_;
   std::atomic<bool> stopping_ = false;
+  // The virtual tilt motor's angle, for the drawn room (SetViewTilt).
+  std::atomic<float> view_tilt_ = 0.0f;
 
   mutable std::mutex lock_;
   std::condition_variable status_changed_;

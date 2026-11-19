@@ -50,6 +50,7 @@ bool TestMotionDevice::GetNewestFrame(SensorFrame& frame) {
     return false;
   }
   SyntheticRoom room;
+  room.tilt_degrees = view_tilt_;
   Body player = StandingPlayer();
   frame = SensorFrame();
   frame.number = number;
