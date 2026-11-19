@@ -1363,7 +1363,8 @@ bool D3D12RenderTargetCache::Resolve(const Memory& memory,
           register_file(), memory, trace_writer_, draw_resolution_scale_x(),
           draw_resolution_scale_y(), edram_tile_count(),
           fixed_16_truncated_to_minus_1_to_1,
-          fixed_16_truncated_to_minus_1_to_1, resolve_info)) {
+          fixed_16_truncated_to_minus_1_to_1, resolve_info,
+          command_processor_.active_vertex_shader())) {
     return false;
   }
 
@@ -1400,7 +1401,8 @@ bool D3D12RenderTargetCache::Resolve(const Memory& memory,
       if (!draw_util::GetResolveInfo(
               register_file(), memory, trace_writer_, 1, 1, edram_tile_count(),
               fixed_16_truncated_to_minus_1_to_1,
-              fixed_16_truncated_to_minus_1_to_1, resolve_info)) {
+              fixed_16_truncated_to_minus_1_to_1, resolve_info,
+              command_processor_.active_vertex_shader())) {
         return false;
       }
     }

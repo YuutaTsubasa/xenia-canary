@@ -875,13 +875,14 @@ struct ResolveInfo {
 // invalid. fixed_rg[ba]16_truncated_to_minus_1_to_1 is false if 16_16[_16_16]
 // color render target formats are properly emulated as -32...32, true if
 // emulated as snorm, with range limited to -1...1, but with correct blending
-// within that range.
+// within that range. vertex_shader is the shader of the copy draw; it is only
+// needed when the rectangles are not in vf0 where Direct3D 9 puts them.
 bool GetResolveInfo(const RegisterFile& regs, const Memory& memory,
                     TraceWriter& trace_writer, uint32_t draw_resolution_scale_x,
                     uint32_t draw_resolution_scale_y, uint32_t edram_tile_count,
                     bool fixed_rg16_truncated_to_minus_1_to_1,
                     bool fixed_rgba16_truncated_to_minus_1_to_1,
-                    ResolveInfo& info_out);
+                    ResolveInfo& info_out, Shader* vertex_shader = nullptr);
 
 // Returns log2 of the resolve copy destination texel size in bytes for the
 // destination info previously returned by a render target cache Resolve (with
