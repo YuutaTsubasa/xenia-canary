@@ -12,6 +12,7 @@
 #include "xenia/base/logging.h"
 #include "xenia/cpu/thread_state.h"
 #include "xenia/kernel/kernel_state.h"
+#include "xenia/kernel/xboxkrnl/xboxkrnl_threading.h"
 #include "xenia/kernel/xthread.h"
 
 namespace xe {
@@ -116,6 +117,82 @@ X_STATUS XTimer::SetTimer(int64_t due_time, uint32_t period_ms,
   }
 
   return result ? X_STATUS_SUCCESS : X_STATUS_UNSUCCESSFUL;
+}
+
+void XTimer::InitializeNative(void* native_ptr,
+                              const X_DISPATCH_HEADER* header) {
+  SetNativePointer(memory()->HostToGuestVirtual(native_ptr));
+  Initialize(header->type == X_OBJECT_TYPES::TimerSynchronizationObject ? 1
+                                                                         : 0);
+}
+
+bool XTimer::SetNativeTimer(int64_t due_time, uint32_t period_ms,
+                            uint32_t dpc_ptr) {
+  using xe::chrono::WinSystemClock;
+  using xe::chrono::XSystemClock;
+
+  std::lock_guard<std::mutex> lock(timer_lock_);
+
+  // The game can look at its timer's header itself (KeReadStateTimer is
+  // usually inlined), so keep "set" and "fired" there as the kernel does.
+  const uint32_t timer_ptr = guest_object();
+  auto timer = memory()->TranslateVirtual<X_KTIMER*>(timer_ptr);
+  const bool was_set = timer->header.inserted != 0;
+  timer_->Cancel();
+  timer->header.inserted = 1;
+  timer->header.signal_state = 0;
+  timer->due_time = static_cast<uint64_t>(due_time);
+  timer->period = period_ms;
+  timer->dpc = dpc_ptr;
+
+  period_ms = Clock::ScaleGuestDurationMillis(period_ms);
+  WinSystemClock::time_point due_tp;
+  if (due_time < 0) {
+    auto after = xe::chrono::hundrednanoseconds(-due_time);
+    due_tp = date::clock_cast<WinSystemClock>(XSystemClock::now() + after);
+  } else {
+    due_tp = date::clock_cast<WinSystemClock>(
+        XSystemClock::from_file_time(due_time));
+  }
+
+  auto memory = this->memory();
+  auto kernel = kernel_state();
+  const bool repeating = period_ms != 0;
+  std::function<void()> callback = [memory, kernel, timer_ptr, dpc_ptr,
+                                    repeating]() {
+    auto timer = memory->TranslateVirtual<X_KTIMER*>(timer_ptr);
+    timer->header.signal_state = 1;
+    if (!repeating) {
+      timer->header.inserted = 0;
+    }
+    if (!dpc_ptr) {
+      return;
+    }
+    // The routine has to run on a guest thread; the dispatch thread is one.
+    uint64_t time = xe::Clock::QueryGuestSystemTime();
+    uint32_t time_low = static_cast<uint32_t>(time);
+    uint32_t time_high = static_cast<uint32_t>(time >> 32);
+    kernel->Dispatch([dpc_ptr, time_low, time_high]() {
+      xboxkrnl::xeKeRunDpc(dpc_ptr, time_low, time_high);
+    });
+  };
+
+  if (!repeating) {
+    timer_->SetOnceAt(due_tp, std::move(callback));
+  } else {
+    timer_->SetRepeatingAt(due_tp, std::chrono::milliseconds(period_ms),
+                           std::move(callback));
+  }
+  return was_set;
+}
+
+bool XTimer::CancelNativeTimer() {
+  std::lock_guard<std::mutex> lock(timer_lock_);
+  auto timer = memory()->TranslateVirtual<X_KTIMER*>(guest_object());
+  const bool was_set = timer->header.inserted != 0;
+  timer_->Cancel();
+  timer->header.inserted = 0;
+  return was_set;
 }
 
 X_STATUS XTimer::Cancel() {

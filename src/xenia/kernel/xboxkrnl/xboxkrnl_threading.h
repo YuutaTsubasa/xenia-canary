@@ -37,6 +37,9 @@ uint32_t NtWaitForSingleObjectEx(uint32_t object_handle, uint32_t wait_mode,
 
 uint32_t xeKeSetEvent(X_KEVENT* event_ptr, uint32_t increment, uint32_t wait);
 
+// Runs a guest DPC routine on the calling guest thread.
+void xeKeRunDpc(uint32_t dpc_ptr, uint32_t arg1, uint32_t arg2);
+
 uint32_t KeDelayExecutionThread(uint32_t processor_mode, uint32_t alertable,
                                 uint64_t* interval_ptr,
                                 cpu::ppc::PPCContext* ctx);

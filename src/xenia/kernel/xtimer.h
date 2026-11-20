@@ -29,9 +29,16 @@ class XTimer : public XObject {
   ~XTimer() override;
 
   void Initialize(uint32_t timer_type);
+  // A timer the game keeps in its own memory (KeInitializeTimerEx).
+  void InitializeNative(void* native_ptr, const X_DISPATCH_HEADER* header);
 
   X_STATUS SetTimer(int64_t due_time, uint32_t period_ms, uint32_t routine,
                     uint32_t routine_arg, bool resume);
+  // KeSetTimerEx: no APC; when the timer fires, the guest DPC (if any) runs on
+  // the kernel dispatch thread. Returns whether the timer was already set.
+  bool SetNativeTimer(int64_t due_time, uint32_t period_ms, uint32_t dpc_ptr);
+  // KeCancelTimer. Returns whether the timer was set.
+  bool CancelNativeTimer();
   X_STATUS Cancel();
 
  protected:
