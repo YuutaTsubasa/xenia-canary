@@ -20,6 +20,14 @@
 #include "xenia/kernel/xam/xam_private.h"
 #include "xenia/xbox.h"
 
+DEFINE_bool(
+    motion_sign_in_first_user, false,
+    "Answer a title's Kinect identity questions (which signed-in player is "
+    "this person?) with the first signed-in player, instead of no one. A "
+    "guess for titles that wait on a Kinect sign-in screen, such as EA SPORTS "
+    "Active 2.",
+    "HID");
+
 namespace xe {
 namespace kernel {
 namespace xam {
@@ -99,9 +107,28 @@ static bool FirstIdentityCall(std::atomic<uint32_t>& count) {
   return count.fetch_add(1) < 3;
 }
 
+// The first signed-in player, for motion_sign_in_first_user; -1 for none.
+static int32_t FirstSignedInUser() {
+  for (uint32_t i = 0; i < XUserMaxUserCount; i++) {
+    if (kernel_state()->xam_state()->GetUserProfile(i)) {
+      return int32_t(i);
+    }
+  }
+  return -1;
+}
+
 dword_result_t XamUserNuiGetUserIndex_entry(unknown_t unk, lpdword_t index) {
   static std::atomic<uint32_t> count{0};
-  if (FirstIdentityCall(count)) {
+  const bool log = FirstIdentityCall(count);
+  int32_t user = cvars::motion_sign_in_first_user ? FirstSignedInUser() : -1;
+  if (user >= 0 && index) {
+    *index = uint32_t(user);
+    if (log) {
+      XELOGI("XamUserNuiGetUserIndex({:08X}): user {}", uint32_t(unk), user);
+    }
+    return X_E_SUCCESS;
+  }
+  if (log) {
     XELOGI("XamUserNuiGetUserIndex({:08X}): no user", uint32_t(unk));
   }
   return X_E_NO_SUCH_USER;
@@ -138,7 +165,16 @@ dword_result_t XamUserNuiGetUserIndexForBind_entry(lpdword_t user_index) {
     return X_E_INVALIDARG;
   }
   static std::atomic<uint32_t> count{0};
-  if (FirstIdentityCall(count)) {
+  const bool log = FirstIdentityCall(count);
+  int32_t user = cvars::motion_sign_in_first_user ? FirstSignedInUser() : -1;
+  if (user >= 0) {
+    *user_index = uint32_t(user);
+    if (log) {
+      XELOGI("XamUserNuiGetUserIndexForBind: user {}", user);
+    }
+    return X_E_SUCCESS;
+  }
+  if (log) {
     XELOGI("XamUserNuiGetUserIndexForBind: failed (not done)");
   }
 
