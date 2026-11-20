@@ -92,7 +92,18 @@ dword_result_t XamNuiGetDeviceStatus_entry(
 }
 DECLARE_XAM_EXPORT1(XamNuiGetDeviceStatus, kNone, kStub);
 
+// The Kinect identity calls (which signed-in player is which person in front
+// of the camera) are mostly stubs. Log the first few calls of each, so the log
+// of a title stuck on a Kinect sign-in screen shows which ones it asks.
+static bool FirstIdentityCall(std::atomic<uint32_t>& count) {
+  return count.fetch_add(1) < 3;
+}
+
 dword_result_t XamUserNuiGetUserIndex_entry(unknown_t unk, lpdword_t index) {
+  static std::atomic<uint32_t> count{0};
+  if (FirstIdentityCall(count)) {
+    XELOGI("XamUserNuiGetUserIndex({:08X}): no user", uint32_t(unk));
+  }
   return X_E_NO_SUCH_USER;
 }
 DECLARE_XAM_EXPORT1(XamUserNuiGetUserIndex, kNone, kStub);
@@ -102,14 +113,22 @@ dword_result_t XamUserNuiGetUserIndexForSignin_entry(lpdword_t user_index) {
     return X_E_INVALIDARG;
   }
 
+  static std::atomic<uint32_t> count{0};
+  const bool log = FirstIdentityCall(count);
   for (uint32_t i = 0; i < XUserMaxUserCount; i++) {
     auto profile = kernel_state()->xam_state()->GetUserProfile(i);
     if (profile) {
       *user_index = i;
+      if (log) {
+        XELOGI("XamUserNuiGetUserIndexForSignin: user {}", i);
+      }
       return X_E_SUCCESS;
     }
   }
 
+  if (log) {
+    XELOGI("XamUserNuiGetUserIndexForSignin: no one signed in");
+  }
   return X_E_FAIL;
 }
 DECLARE_XAM_EXPORT1(XamUserNuiGetUserIndexForSignin, kNone, kImplemented);
@@ -117,6 +136,10 @@ DECLARE_XAM_EXPORT1(XamUserNuiGetUserIndexForSignin, kNone, kImplemented);
 dword_result_t XamUserNuiGetUserIndexForBind_entry(lpdword_t user_index) {
   if (!user_index) {
     return X_E_INVALIDARG;
+  }
+  static std::atomic<uint32_t> count{0};
+  if (FirstIdentityCall(count)) {
+    XELOGI("XamUserNuiGetUserIndexForBind: failed (not done)");
   }
 
   return X_E_FAIL;
@@ -459,6 +482,13 @@ dword_result_t XamNuiIdentityEnrollForSignIn_entry(dword_t unk1, qword_t unk2,
   /* Notes:
      - Decompiler issues so double check
   */
+  static std::atomic<uint32_t> count{0};
+  if (FirstIdentityCall(count)) {
+    XELOGI(
+        "XamNuiIdentityEnrollForSignIn({:08X}, {:016X}, {:016X}, {:08X}): "
+        "failed (not done)",
+        uint32_t(unk1), uint64_t(unk2), uint64_t(unk3), uint32_t(unk4));
+  }
   if (XamNuiHudIsEnabled_entry() == false) {
     return X_E_FAIL;
   }
@@ -471,6 +501,10 @@ dword_result_t XamNuiIdentityEnrollForSignIn_entry(dword_t unk1, qword_t unk2,
 DECLARE_XAM_EXPORT1(XamNuiIdentityEnrollForSignIn, kNone, kStub);
 
 dword_result_t XamNuiIdentityAbort_entry(dword_t unk) {
+  static std::atomic<uint32_t> count{0};
+  if (FirstIdentityCall(count)) {
+    XELOGI("XamNuiIdentityAbort({:08X}): failed (not done)", uint32_t(unk));
+  }
   if (XamNuiHudIsEnabled_entry() == false) {
     return X_E_FAIL;
   }
@@ -484,6 +518,11 @@ DECLARE_XAM_EXPORT1(XamNuiIdentityAbort, kNone, kStub);
 // Other
 dword_result_t XamUserNuiEnableBiometric_entry(dword_t user_index,
                                                int_t enable) {
+  static std::atomic<uint32_t> count{0};
+  if (FirstIdentityCall(count)) {
+    XELOGI("XamUserNuiEnableBiometric(user {}, {}): failed (not done)",
+           uint32_t(user_index), int32_t(enable));
+  }
   return X_E_INVALIDARG;
 }
 DECLARE_XAM_EXPORT1(XamUserNuiEnableBiometric, kNone, kStub);

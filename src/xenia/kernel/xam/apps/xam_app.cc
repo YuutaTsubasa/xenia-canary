@@ -233,7 +233,7 @@ X_HRESULT XamApp::DispatchMessageSync(uint32_t message, uint32_t buffer_ptr,
       if (!buffer_ptr) {
         return X_E_INVALIDARG;
       }
-      XELOGD("XamApp: Kinect identity callback {:08X}",
+      XELOGI("XamApp: Kinect identity callback {:08X} (never called back)",
              xe::load_and_swap<uint32_t>(buffer));
       return X_E_SUCCESS;
     }
