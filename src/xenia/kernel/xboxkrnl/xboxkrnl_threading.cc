@@ -893,6 +893,45 @@ dword_result_t NtReleaseMutant_entry(dword_t mutant_handle,
 }
 DECLARE_XBOXKRNL_EXPORT1(NtReleaseMutant, kThreading, kImplemented);
 
+// A mutant the game keeps in its own memory instead of behind a handle (UFC
+// Personal Trainer uses these). Same layout as the kernel's: free is a signal
+// state of 1, held is 0 with the owner thread filled in.
+void KeInitializeMutant_entry(pointer_t<X_KMUTANT> mutant_ptr,
+                              dword_t initial_owner) {
+  mutant_ptr.Zero();
+  mutant_ptr->header.type = MutantObject;
+  mutant_ptr->header.signal_state = initial_owner ? 0 : 1;
+  if (initial_owner) {
+    auto thread = XThread::GetCurrentThread();
+    if (thread) {
+      mutant_ptr->owner = thread->guest_object();
+    }
+  }
+
+  auto mutant = XObject::GetNativeObject<XMutant>(kernel_state(), mutant_ptr,
+                                                  MutantObject);
+  if (!mutant) {
+    assert_always();
+  }
+}
+DECLARE_XBOXKRNL_EXPORT1(KeInitializeMutant, kThreading, kImplemented);
+
+// Returns the signal state before the release. Xenia keeps the count in the
+// host mutant, so this is 0 when the release worked; titles normally ignore
+// it.
+dword_result_t KeReleaseMutant_entry(pointer_t<X_KMUTANT> mutant_ptr,
+                                     dword_t increment, dword_t abandoned,
+                                     dword_t wait) {
+  auto mutant = XObject::GetNativeObject<XMutant>(kernel_state(), mutant_ptr,
+                                                  MutantObject);
+  if (!mutant) {
+    return 0;
+  }
+  mutant->ReleaseMutant(increment, abandoned != 0, wait != 0);
+  return 0;
+}
+DECLARE_XBOXKRNL_EXPORT1(KeReleaseMutant, kThreading, kImplemented);
+
 dword_result_t NtCreateTimer_entry(
     lpdword_t handle_ptr, pointer_t<X_OBJECT_ATTRIBUTES> obj_attributes_ptr,
     dword_t timer_type) {

@@ -34,9 +34,17 @@ void XMutant::Initialize(bool initial_owner) {
 void XMutant::InitializeNative(void* native_ptr,
                                const X_DISPATCH_HEADER* header) {
   assert_false(mutant_);
+  SetNativePointer(memory()->HostToGuestVirtual(native_ptr));
 
-  // Haven't seen this yet, but it's possible.
-  assert_always();
+  // A mutant someone holds has a signal state of 0 or less; a free one has 1.
+  // KeInitializeMutant runs on the thread that should own it, and the host
+  // mutant takes the creating thread as its owner.
+  const bool owned = static_cast<int32_t>(header->signal_state) <= 0;
+  mutant_ = xe::threading::Mutant::Create(owned);
+  assert_not_null(mutant_);
+  if (owned) {
+    owning_thread_ = XThread::GetCurrentThread();
+  }
 }
 
 X_STATUS XMutant::ReleaseMutant(uint32_t priority_increment, bool abandon,
