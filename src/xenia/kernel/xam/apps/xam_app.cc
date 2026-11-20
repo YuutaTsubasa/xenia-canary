@@ -14,6 +14,10 @@
 #include "xenia/kernel/nui.h"
 #include "xenia/kernel/xam/xam_content_device.h"
 #include "xenia/kernel/xenumerator.h"
+#include "xenia/kernel/xthread.h"
+
+#include <map>
+#include <mutex>
 
 /* Notes:
    - Messages ids that start with 0x00021xxx are UI calls
@@ -221,10 +225,50 @@ X_HRESULT XamApp::DispatchMessageSync(uint32_t message, uint32_t buffer_ptr,
       return is_pc_enabled ? X_E_ACCESS_DENIED : X_E_SUCCESS;
     }
   }
-  XELOGE(
-      "Unimplemented XAM message app={:08X}, msg={:08X}, arg1={:08X}, "
-      "arg2={:08X}",
-      app_id(), message, buffer_ptr, buffer_length);
+  // A title may send the same unknown message every frame. Say what it looked
+  // like the first few times, with the words it points at, any names those
+  // words point at, and where in the title it came from, so a log tells us
+  // what the message is for; then stay quiet instead of filling the log.
+  static std::mutex unknown_mutex;
+  static std::map<uint32_t, uint32_t> unknown_counts;
+  uint32_t seen;
+  {
+    std::lock_guard<std::mutex> lock(unknown_mutex);
+    seen = ++unknown_counts[message];
+  }
+  if (seen <= 3) {
+    std::string words, names;
+    if (buffer_ptr) {
+      for (uint32_t i = 0; i < 8; ++i) {
+        uint32_t word = xe::load_and_swap<uint32_t>(buffer + i * 4);
+        words += fmt::format("{}{:08X}", i ? " " : "", word);
+        // A word in the title's image may be a name, such as the resource or
+        // task the message is about.
+        if (word >= 0x82000000 && word < 0x90000000) {
+          auto text = memory_->TranslateVirtual<const char*>(word);
+          std::string name;
+          while (name.size() < 48 && text[name.size()] >= 0x20 &&
+                 text[name.size()] < 0x7F) {
+            name += text[name.size()];
+          }
+          if (name.size() >= 3 && !text[name.size()]) {
+            names += fmt::format(", word {} names \"{}\"", i, name);
+          }
+        }
+      }
+    }
+    uint32_t caller = 0;
+    if (XThread::IsInThread()) {
+      caller = static_cast<uint32_t>(
+          XThread::GetCurrentThread()->thread_state()->context()->lr);
+    }
+    XELOGE(
+        "Unimplemented XAM message app={:08X}, msg={:08X}, arg1={:08X}, "
+        "arg2={:08X}, called from {:08X}, words at arg1: {}{}{}",
+        app_id(), message, buffer_ptr, buffer_length, caller,
+        words.empty() ? "none" : words, names,
+        seen == 3 ? " (not logged again)" : "");
+  }
   return X_E_FAIL;
 }
 
