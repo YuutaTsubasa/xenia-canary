@@ -163,6 +163,29 @@ X_HRESULT XamApp::DispatchMessageSync(uint32_t message, uint32_t buffer_ptr,
       XELOGD("XNuiDelayUI unimplemented({:08X})", ms_delay);
       return X_E_SUCCESS;
     }
+    case 0x0002B002: {
+      // Sent every frame by the Kinect library in titles such as Sonic Free
+      // Riders, Game Party: In Motion and EA SPORTS Active 2. Its argument
+      // holds two small numbers (0 and 5 in Free Riders), a mask (0x2DFF)
+      // and four floats that look like the floor's plane: a normal close to
+      // (0, 1, 0) and the camera's height. It looks like the title telling
+      // the system what it sees, so take it and say it worked; the title got
+      // a failure on every frame before. Free Riders' hand cursor still comes
+      // up with this answer.
+      static bool logged = false;
+      if (!logged && buffer_ptr) {
+        logged = true;
+        auto words = reinterpret_cast<const xe::be<uint32_t>*>(buffer);
+        auto floats = reinterpret_cast<const xe::be<float>*>(buffer);
+        XELOGI(
+            "XamApp: Kinect message 0x2B002 (first of many): {:08X} {:08X} "
+            "{:08X} {:08X}, plane {} {} {} {}",
+            uint32_t(words[0]), uint32_t(words[1]), uint32_t(words[2]),
+            uint32_t(words[3]), float(floats[4]), float(floats[5]),
+            float(floats[6]), float(floats[7]));
+      }
+      return X_E_SUCCESS;
+    }
     case 0x0002B003: {
       // Games used in:
       // 4D5309C9
