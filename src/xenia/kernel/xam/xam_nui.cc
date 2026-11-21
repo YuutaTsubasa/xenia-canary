@@ -135,6 +135,36 @@ dword_result_t XamUserNuiGetUserIndex_entry(unknown_t unk, lpdword_t index) {
 }
 DECLARE_XAM_EXPORT1(XamUserNuiGetUserIndex, kNone, kStub);
 
+// Which Kinect identity enrollment (the face the console learned for a
+// player) belongs to a signed-in player. The identity code asks before it
+// looks for stored face data, and with an answer it does not need any
+// (docs/kinect-pscam.md section 14). With motion_sign_in_first_user, every
+// signed-in player is enrolled under their own user index; otherwise no one
+// is, as before.
+dword_result_t XamUserNuiGetEnrollmentIndex_entry(dword_t user_index,
+                                                  lpdword_t enrollment) {
+  static std::atomic<uint32_t> count{0};
+  const bool log = FirstIdentityCall(count);
+  const bool enrolled = cvars::motion_sign_in_first_user &&
+                        user_index < XUserMaxUserCount &&
+                        kernel_state()->xam_state()->GetUserProfile(
+                            uint32_t(user_index)) != nullptr;
+  if (enrolled && enrollment) {
+    *enrollment = uint32_t(user_index);
+    if (log) {
+      XELOGI("XamUserNuiGetEnrollmentIndex(user {}): enrollment {}",
+             uint32_t(user_index), uint32_t(user_index));
+    }
+    return X_E_SUCCESS;
+  }
+  if (log) {
+    XELOGI("XamUserNuiGetEnrollmentIndex(user {}): not enrolled",
+           uint32_t(user_index));
+  }
+  return X_E_NO_SUCH_USER;
+}
+DECLARE_XAM_EXPORT1(XamUserNuiGetEnrollmentIndex, kNone, kStub);
+
 dword_result_t XamUserNuiGetUserIndexForSignin_entry(lpdword_t user_index) {
   if (!user_index) {
     return X_E_INVALIDARG;
