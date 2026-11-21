@@ -85,6 +85,7 @@ class KinectCamera {
   void SaveDepthPicture(const hid::motion::DepthImage& depth,
                         const std::string& name);
   void CompleteRead(uint32_t block, X_STATUS status, uint32_t bytes);
+  void CompleteSettings(uint32_t block);
 
   KernelState* kernel_state_;
   hid::motion::VirtualTilt tilt_;
@@ -94,6 +95,8 @@ class KinectCamera {
   // Frame reads (code 5) waiting for a frame: request block addresses.
   std::deque<uint32_t> depth_reads_;
   std::deque<uint32_t> colour_reads_;
+  // Colour-settings requests (code 35) waiting for the worker to call back.
+  std::deque<uint32_t> settings_requests_;
 
   object_ref<XHostThread> worker_;
   std::atomic<bool> worker_running_ = false;
@@ -103,6 +106,8 @@ class KinectCamera {
   hid::motion::SensorFrame frame_;
   uint64_t delivered_frame_ = 0;
   uint32_t frame_number_ = 0;
+  // Worker-only: the number given to the newest colour settings (code 35).
+  uint8_t settings_number_ = 0;
 
   // For the log, so a tester's xenia.log shows how far a title got with the
   // camera: each request code is logged the first time it comes (under
@@ -113,6 +118,7 @@ class KinectCamera {
   bool depth_failure_logged_ = false;
   bool stall_logged_ = false;
   bool cancel_logged_ = false;
+  bool settings_logged_ = false;
   std::chrono::steady_clock::time_point last_depth_frame_ = {};
 
   // Worker-only, for ReportDepth: the picture the title got last (the

@@ -81,6 +81,12 @@ constexpr size_t kReadStream = 6;
 constexpr size_t kReadBuffer = 7;
 constexpr size_t kReadLength = 8;
 constexpr size_t kReadInfo = 10;
+// A colour-settings request's block (code 35, section 2): +20 callback, as
+// in a frame read, and +24 where the driver puts the number it gave these
+// settings. Colour frames carry that number (a byte at +44 of their read)
+// so the title knows which settings each one was taken with.
+constexpr size_t kSettingsCallback = 5;
+constexpr size_t kSettingsNumber = 6;
 enum PsCamStream : uint32_t {
   kStreamColour = 2,
   kStreamDepth = 4,
@@ -236,11 +242,23 @@ X_STATUS KinectCamera::HandleRequest(uint32_t block, uint32_t request,
     }
     case kRequestCalibrationOld:
       return ReplyCalibration(words);
-    case kRequestColourSettings:
+    case kRequestColourSettings: {
       // Colour-camera settings (exposure, white balance). The virtual
-      // camera has none to set; this status makes the title stop asking
-      // instead of retrying (section 2).
-      return kStatusDeviceNotConnected;
+      // camera has none to change, but the title's Kinect identity waits
+      // for a colour frame taken with its own face settings, so take them:
+      // the worker numbers them and calls back, as the driver does
+      // (section 2).
+      if (!words[kSettingsCallback]) {
+        return X_STATUS_INVALID_PARAMETER;
+      }
+      {
+        std::lock_guard<std::mutex> guard(lock_);
+        settings_requests_.push_back(block);
+      }
+      StartWorker();
+      wake_.notify_all();
+      return X_STATUS_PENDING;
+    }
     case kRequestUnknown33:
       // Its meaning is unknown and the title ignores the result.
       return X_STATUS_SUCCESS;
@@ -331,6 +349,7 @@ void KinectCamera::StartWorker() {
 void KinectCamera::WorkerMain() {
   while (true) {
     std::deque<uint32_t> cancelled;
+    std::deque<uint32_t> settings;
     bool want_depth = false;
     {
       std::unique_lock<std::mutex> guard(lock_);
@@ -338,6 +357,7 @@ void KinectCamera::WorkerMain() {
       if (!worker_running_) {
         return;
       }
+      settings.swap(settings_requests_);
       if (!streaming_) {
         cancelled.swap(depth_reads_);
         cancelled.insert(cancelled.end(), colour_reads_.begin(),
@@ -372,6 +392,9 @@ void KinectCamera::WorkerMain() {
     }
     for (uint32_t block : cancelled) {
       CompleteRead(block, kStatusCancelled, 0);
+    }
+    for (uint32_t block : settings) {
+      CompleteSettings(block);
     }
     if (!want_depth) {
       continue;
@@ -530,6 +553,26 @@ void KinectCamera::CompleteRead(uint32_t block, X_STATUS status,
       kernel_state_->memory()->TranslateVirtual<xe::be<uint32_t>*>(block);
   const uint32_t callback = words[kReadCallback];
   uint64_t args[] = {block, status, bytes};
+  kernel_state_->processor()->Execute(worker_->thread_state(), callback, args,
+                                      xe::countof(args));
+}
+
+// Finishes a colour-settings request (code 35): gives the settings the next
+// number and calls back with success, on this worker. The title keeps the
+// numbers in a byte, so they count 0 to 255 and round again. Its callback
+// may send the next request straight away; that one waits for the next
+// turn of the worker.
+void KinectCamera::CompleteSettings(uint32_t block) {
+  auto* words =
+      kernel_state_->memory()->TranslateVirtual<xe::be<uint32_t>*>(block);
+  settings_number_ = uint8_t(settings_number_ + 1);
+  words[kSettingsNumber] = settings_number_;
+  if (!settings_logged_) {
+    settings_logged_ = true;
+    XELOGI("Kinect camera: took the title's first colour settings");
+  }
+  const uint32_t callback = words[kSettingsCallback];
+  uint64_t args[] = {block, X_STATUS_SUCCESS, 0};
   kernel_state_->processor()->Execute(worker_->thread_state(), callback, args,
                                       xe::countof(args));
 }
