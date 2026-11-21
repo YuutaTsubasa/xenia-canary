@@ -87,6 +87,7 @@ constexpr size_t kReadInfo = 10;
 // so the title knows which settings each one was taken with.
 constexpr size_t kSettingsCallback = 5;
 constexpr size_t kSettingsNumber = 6;
+constexpr size_t kColourSettingsByte = 44;
 enum PsCamStream : uint32_t {
   kStreamColour = 2,
   kStreamDepth = 4,
@@ -316,9 +317,8 @@ X_STATUS KinectCamera::QueueFrameRead(uint32_t block, xe::be<uint32_t>* words) {
         colour_read_logged_ = true;
         XELOGI("Kinect camera: title queued its first colour frame read");
       }
-      // Colour reads wait until the colour format is known (Bayer or YUV,
-      // docs/kinect-pscam.md section 11); they are cancelled when the
-      // camera stops. The title tracks from depth alone.
+      // Colour reads are finished with each depth frame (FillColourRead);
+      // they are cancelled when the camera stops.
       colour_reads_.push_back(block);
     }
   }
@@ -420,6 +420,20 @@ void KinectCamera::WorkerMain() {
       depth_reads_.pop_front();
     }
     if (FillDepthRead(block)) {
+      // A colour frame first: the title pairs the newest colour frame with
+      // the next depth frame it gets.
+      uint32_t colour_block = 0;
+      {
+        std::lock_guard<std::mutex> guard(lock_);
+        if (!colour_reads_.empty()) {
+          colour_block = colour_reads_.front();
+          colour_reads_.pop_front();
+        }
+      }
+      if (colour_block) {
+        CompleteRead(colour_block, X_STATUS_SUCCESS,
+                     FillColourRead(colour_block));
+      }
       ReportDepth(now);
       ReportTilt();
       if (!depth_frame_logged_) {
@@ -469,6 +483,34 @@ bool KinectCamera::FillDepthRead(uint32_t block) {
     *memory->TranslateVirtual<xe::be<uint32_t>*>(info) = ++frame_number_;
   }
   return true;
+}
+
+// Writes a colour frame into a read's buffer and returns its length. The
+// colour format (Bayer or YUV, docs/kinect-pscam.md section 11) is still not
+// known, so the picture is plain grey: 0x80 is a middle grey in either. What
+// the title needs from it for now is that it comes, with the frame number
+// the depth frame has and, in the byte at +44, the number of the colour
+// settings in force (CompleteSettings), so the identity code finds a frame
+// taken with its own settings.
+uint32_t KinectCamera::FillColourRead(uint32_t block) {
+  auto memory = kernel_state_->memory();
+  auto* words = memory->TranslateVirtual<xe::be<uint32_t>*>(block);
+  const uint32_t length = words[kReadLength];
+  std::memset(memory->TranslateVirtual<uint8_t*>(words[kReadBuffer]), 0x80,
+              length);
+  if (uint32_t info = words[kReadInfo]) {
+    *memory->TranslateVirtual<xe::be<uint32_t>*>(info) = frame_number_;
+  }
+  memory->TranslateVirtual<uint8_t*>(block)[kColourSettingsByte] =
+      settings_number_;
+  if (!colour_frame_logged_) {
+    colour_frame_logged_ = true;
+    XELOGI(
+        "Kinect camera: first colour frame handed to the title ({} bytes, "
+        "grey, settings {})",
+        length, settings_number_);
+  }
+  return length;
 }
 
 void KinectCamera::ReportDepth(Clock::time_point now) {

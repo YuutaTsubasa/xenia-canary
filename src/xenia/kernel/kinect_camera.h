@@ -73,6 +73,7 @@ class KinectCamera {
   void StartWorker();
   void WorkerMain();
   bool FillDepthRead(uint32_t block);
+  uint32_t FillColourRead(uint32_t block);
   // Every 10 s for the first two minutes of depth: a log line on what the
   // title was given, and with motion_save_depth_pictures the pictures.
   void ReportDepth(std::chrono::steady_clock::time_point now);
@@ -115,6 +116,7 @@ class KinectCamera {
   std::array<bool, 64> request_logged_ = {};
   bool colour_read_logged_ = false;
   bool depth_frame_logged_ = false;
+  bool colour_frame_logged_ = false;
   bool depth_failure_logged_ = false;
   bool stall_logged_ = false;
   bool cancel_logged_ = false;
