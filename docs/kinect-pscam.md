@@ -796,3 +796,70 @@ Signature: `GetDeviceStatus(16-byte buf)`. Only **+0xC status_bits** is ever rea
 4. status_bits bit 1 and bit 3 meanings; what `sub_8290B100` does.
 5. Whether game code (outside the NUI library) reads vNormalToGravity / vFloorClipPlane from the skeleton frame. Not traced.
 6. G+0 really equals 27 (confirm that F640 does not OR in 0x800 or 0x04000000).
+
+## 14. Kinect identity (XAM messages 0x2Axxx / 0x2Cxxx)
+
+Third tracing pass (2026-11-21/22), same title and rules. It follows why EA SPORTS Active 2, UFC Personal Trainer and Kinectimals stop on their sign-in screens. These titles link the same NUI library, and the identity code is part of it. G = the NUI global block (`-11600(-32074)`, as above); `I` = the identity block at `*(0x82B5D2B0-844)` (another global).
+
+### 1. `GetIdentityData` and error 80070015 [seen]
+
+* `sub_8276B278` (the library's GetIdentityData) sets a request (G+8548 = 1, G+8544 = request) and waits on 2 objects (its event G+8524 and the caller's) for about 0.67 s. On a timeout (258) it returns **0x80070015** ("not ready"), and the title prints `[NuiIdentity] Unexpected Error - GetIdentityData hr = 80070015`.
+* The request is answered by the per-frame worker `sub_8276C020`. It answers only when the frame has a colour record (worker+276) whose +120 is 1, and whose 12 bytes at +108 equal G+2200. These are the colour settings that were in force for that frame (section 4, colour completion), so the frame has to be one taken with the identity settings.
+* So the driver has to accept code 35 and deliver colour frames that carry the settings number in the byte at +44. Commits 46 and 47 in motion-capture-log.md do this. With test build 8, the error is gone from the testers' logs.
+
+### 2. Messages the library sends to XAM [seen]
+
+All go to app 0xFE, with a 24-byte argument block. Each wrapper fills the block:
+
+| msg | wrapper | block | how it is used |
+|---|---|---|---|
+| 0x2A004 | `sub_82A70678` | name, qword, buffer, size | write a stored blob (inferred) |
+| 0x2A005 | `sub_82A70608` | name ("NuiIdentity"), qword* id, buffer, u32* size | read a stored blob: first with no buffer, to get id and size. A failure makes `sub_8277F628` return E_FAIL. Size 0, id 0 or a different id makes it return 1 (nothing stored) |
+| 0x2A006 | `sub_82A705B8` | name | unknown (open or close) |
+| 0x2A007 | `sub_82A70550` | xuid, qword, buffer, size | write biometric data for a user (inferred) |
+| 0x2A008 | `sub_82A704E0` | xuid, qword* id, buffer, u32* size | read biometric data for a user; `id == 0x80000000` means none. Only asked when `XamUserNuiGetEnrollmentIndex` fails for that user (`sub_82773E28`) |
+| 0x2A009 | `sub_82A70490` | qword | unknown |
+| 0x2C009 | `sub_82A703C0` | callback pointer | registers the identity callback (below); XMsgInProcessCall |
+| 0x2C00C | `sub_82A703F8` | mode, qword, buffer, size, out, u32* outsize | a XAM-side transform of a buffer: mode 2 with a name such as "NuiV1FaceHiRes" while loading face models; mode 0/1 to unpack stored blobs |
+
+Every message here is async (XMsgStartIORequest), except 0x2C009 and 0x2C00C. All of them fail in Xenia, and the library treats that as "nothing stored". That is not what blocks the titles.
+
+### 3. The identity callback (`sub_82774720` in Free Riders) [seen]
+
+`callback(msg, data)`, where `msg - 0x2C002` (0..17) selects a case. This is how XAM tells the title about identity:
+
+| msg | case | what the title does |
+|---|---|---|
+| 0x2C002 | 0 | nothing, returns 0 |
+| 0x2C006 | 4 | `sub_82773888(2, data[0], data[1], data[2] \| 0x80000001)`: "skeleton data[0] is identity entry data[1]" |
+| 0x2C007 | 5 | `sub_82773888(1, data[0], 0, 0x80000000)` |
+| 0x2C008 | 6 | `sub_82773888(6, data[0], 0, 0x80000000)` |
+| 0x2C00A | 8 | returns a global in data[0] |
+| 0x2C00B | 9 | sets a global flag to 1 |
+| 0x2C00E | 12 | `sub_82773AF0(data[0])` |
+| 0x2C00F | 13 | `sub_827745F0()` |
+| 0x2C011 | 15 | copies identity data out: needs data[0] >= 24 and writes 20 bytes to data[1..5] |
+| 0x2C012 | 16 | `sub_827728F0(data[1], 1)` (needs data[0] >= 8) |
+| 0x2C013 | 17 | `sub_82764728(data[1], ...)`, writes 2 words (needs data[0] >= 16) |
+| others | | DbgPrint and 0x8000FFFF |
+
+`sub_82773888(type, trackingId, entry, flags)`:
+* Looks up `trackingId` among the 6 skeleton slots of `I`. Slot i is at I+192+i*336: tracking id at +324, state at +328 (2 = tracked), identity entry at +320. If there is no tracked slot with that id, it fails with 0x83010008.
+* It then fills a 88-byte request record and signals the identity event.
+* Type 2 goes through `sub_82773568`, which uses the 8 identity entries of 24 bytes at I+0 (state 3 = in use) and returns the entry number used.
+
+### 4. What 0x2B002 carries [seen]
+
+`sub_827795D0` → `sub_827794E8` builds a 2784-byte block each frame, and the worker sends it as 0x2B002:
+* +0 qword 5
+* +8 qword 0x2DFF
+* +16 and +32 two vectors: the floor clip plane and the normal to gravity
+* +48 2688 bytes: the 6 skeletons (6 x 448: state, tracking id, enrollment index, user index, position, 20 joints...), copied from the skeleton frame
+* +2736 the timestamp, and +2748..+2760 four words
+
+So XAM sees every tracked skeleton and its tracking id. That is how a console's XAM would know whom to identify and which `trackingId` to put in 0x2C006.
+
+### Open questions
+
+* Which callback message the console sends when it recognises a signed-in player (0x2C006 is the likely one), and what `entry` and `flags` should be. Entry looks like the enrollment index (0..7).
+* Whether titles then read the user from the skeleton's enrollment/user index fields, or from `XamUserNuiGetEnrollmentIndex` (exported, still not implemented in Xenia), or both.
