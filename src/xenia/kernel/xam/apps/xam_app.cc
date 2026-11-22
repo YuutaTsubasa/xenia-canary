@@ -9,7 +9,9 @@
 
 #include "xenia/kernel/xam/apps/xam_app.h"
 
+#include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
+#include "xenia/cpu/processor.h"
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/nui.h"
 #include "xenia/kernel/xam/xam_content_device.h"
@@ -27,6 +29,8 @@
    - Messages ids that start with 0x0002Cxxx are used by the XamNuiIdentity
    functions
 */
+
+DECLARE_bool(motion_sign_in_first_user);
 
 namespace xe {
 namespace kernel {
@@ -184,6 +188,9 @@ X_HRESULT XamApp::DispatchMessageSync(uint32_t message, uint32_t buffer_ptr,
             uint32_t(words[3]), float(floats[4]), float(floats[5]),
             float(floats[6]), float(floats[7]));
       }
+      if (buffer_ptr) {
+        AnnounceIdentity(buffer);
+      }
       return X_E_SUCCESS;
     }
     case 0x0002B003: {
@@ -233,8 +240,14 @@ X_HRESULT XamApp::DispatchMessageSync(uint32_t message, uint32_t buffer_ptr,
       if (!buffer_ptr) {
         return X_E_INVALIDARG;
       }
-      XELOGI("XamApp: Kinect identity callback {:08X} (never called back)",
-             xe::load_and_swap<uint32_t>(buffer));
+      {
+        const uint32_t callback = xe::load_and_swap<uint32_t>(buffer);
+        identity_callback_ = callback;
+        XELOGI("XamApp: Kinect identity callback {:08X}{}", callback,
+               cvars::motion_sign_in_first_user
+                   ? ""
+                   : " (never called back: motion_sign_in_first_user is off)");
+      }
       return X_E_SUCCESS;
     }
     // Causes dashboard to correctly process language/region change. It does not
@@ -293,6 +306,71 @@ X_HRESULT XamApp::DispatchMessageSync(uint32_t message, uint32_t buffer_ptr,
         seen == 3 ? " (not logged again)" : "");
   }
   return X_E_FAIL;
+}
+
+// With motion_sign_in_first_user, says that the first tracked skeleton in a
+// 0x2B002 frame is a signed-in player, as a console's XAM does once it has
+// recognised someone's face (docs/kinect-pscam.md section 14). The frame
+// holds the title's 6 skeletons at +48, 448 bytes each: tracking state at
+// +0 (2 = tracked) and tracking id at +4. The title's callback takes 0x2C006
+// with {tracking id, identity entry, flags}; with flags 0 it picks a free
+// entry itself. Each new tracking id is announced once.
+void XamApp::AnnounceIdentity(const uint8_t* frame) {
+  const uint32_t callback = identity_callback_;
+  if (!cvars::motion_sign_in_first_user || !callback ||
+      !kernel_state_->xam_state()->GetUserProfile(uint32_t(0))) {
+    return;
+  }
+  constexpr uint32_t kSkeletons = 6;
+  constexpr uint32_t kSkeletonBytes = 448;
+  constexpr uint32_t kSkeletonTracked = 2;
+  uint32_t tracking_id = 0;
+  bool still_there = false;
+  for (uint32_t i = 0; i < kSkeletons; ++i) {
+    const uint8_t* skeleton = frame + 48 + i * kSkeletonBytes;
+    if (xe::load_and_swap<uint32_t>(skeleton) != kSkeletonTracked) {
+      continue;
+    }
+    const uint32_t id = xe::load_and_swap<uint32_t>(skeleton + 4);
+    if (id == identified_tracking_id_) {
+      still_there = true;
+    } else if (!tracking_id) {
+      tracking_id = id;
+    }
+  }
+  if (still_there || !tracking_id) {
+    if (!still_there) {
+      identified_tracking_id_ = 0;  // they left; announce whoever comes next
+    }
+    return;
+  }
+  identified_tracking_id_ = tracking_id;
+  if (!identity_block_) {
+    identity_block_ = memory_->SystemHeapAlloc(16);
+  }
+  const uint32_t block = identity_block_;
+  auto* words = memory_->TranslateVirtual<xe::be<uint32_t>*>(block);
+  words[0] = tracking_id;
+  words[1] = 0;  // identity entry: unused with flags 0
+  words[2] = 0;  // flags
+  XELOGI(
+      "XamApp: told the title's Kinect identity callback that skeleton {:08X} "
+      "is the signed-in player",
+      tracking_id);
+  // On the kernel's dispatch thread, a guest thread of its own: the title
+  // sends 0x2B002 from its identity worker, which may hold the locks the
+  // callback takes.
+  auto kernel_state = kernel_state_;
+  kernel_state_->Dispatch([kernel_state, callback, block]() {
+    auto thread = XThread::GetCurrentThread();
+    if (!thread) {
+      return;
+    }
+    uint64_t args[] = {0x0002C006, block};
+    uint64_t result = kernel_state->processor()->Execute(
+        thread->thread_state(), callback, args, xe::countof(args));
+    XELOGI("XamApp: the identity callback answered {:08X}", uint32_t(result));
+  });
 }
 
 }  // namespace apps

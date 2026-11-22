@@ -10,6 +10,8 @@
 #ifndef XENIA_KERNEL_XAM_APPS_XAM_APP_H_
 #define XENIA_KERNEL_XAM_APPS_XAM_APP_H_
 
+#include <atomic>
+
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/xam/app_manager.h"
 
@@ -32,6 +34,18 @@ class XamApp : public App {
 
   X_HRESULT DispatchMessageSync(uint32_t message, uint32_t buffer_ptr,
                                 uint32_t buffer_length) override;
+
+ private:
+  // Kinect identity (docs/kinect-pscam.md section 14): tells the title's
+  // identity callback that the skeleton in this 0x2B002 frame is a
+  // signed-in player.
+  void AnnounceIdentity(const uint8_t* frame);
+
+  // The callback the title registered with 0x2C009, the guest block handed
+  // to it, and the tracking id of the skeleton last announced.
+  std::atomic<uint32_t> identity_callback_ = 0;
+  uint32_t identity_block_ = 0;
+  uint32_t identified_tracking_id_ = 0;
 };
 
 }  // namespace apps
