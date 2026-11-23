@@ -588,12 +588,20 @@ void KinectCamera::SaveDepthPicture(const hid::motion::DepthImage& depth,
     XELOGI("Kinect camera: saving depth pictures in {}",
            xe::path_to_utf8(folder));
   }
-  auto path = folder / (name + ".bmp");
-  std::ofstream file(path, std::ios::binary | std::ios::trunc);
-  file.write(reinterpret_cast<const char*>(bitmap.data()),
-             std::streamsize(bitmap.size()));
-  if (!file) {
-    XELOGW("Kinect camera: could not save {}", xe::path_to_utf8(path));
+  auto save = [](const std::filesystem::path& path,
+                 const std::vector<uint8_t>& bytes) {
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    file.write(reinterpret_cast<const char*>(bytes.data()),
+               std::streamsize(bytes.size()));
+    if (!file) {
+      XELOGW("Kinect camera: could not save {}", xe::path_to_utf8(path));
+    }
+  };
+  save(folder / (name + ".bmp"), bitmap);
+  // The colour the title's colour frames are made from, beside it.
+  std::vector<uint8_t> colour = hid::motion::ColourToBitmap(depth);
+  if (!colour.empty()) {
+    save(folder / (name + "_colour.bmp"), colour);
   }
 }
 

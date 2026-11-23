@@ -99,6 +99,37 @@ std::vector<uint8_t> DepthToBitmap(const DepthImage& depth) {
   return out;
 }
 
+std::vector<uint8_t> ColourToBitmap(const DepthImage& depth) {
+  if (!depth.width || !depth.height || !depth.has_colour()) {
+    return {};
+  }
+  // BITMAPFILEHEADER (14) + BITMAPINFOHEADER (40), then B G R rows padded
+  // to 4 bytes, top first (negative height).
+  const uint32_t row_bytes = (depth.width * 3 + 3) & ~3u;
+  const uint32_t pixels_at = 14 + 40;
+  std::vector<uint8_t> out(pixels_at + size_t(row_bytes) * depth.height, 0);
+  out[0] = 'B';
+  out[1] = 'M';
+  PutU32(out, 2, uint32_t(out.size()));
+  PutU32(out, 10, pixels_at);
+  PutU32(out, 14, 40);
+  PutU32(out, 18, depth.width);
+  PutU32(out, 22, uint32_t(-int32_t(depth.height)));
+  PutU16(out, 26, 1);   // planes
+  PutU16(out, 28, 24);  // bits per pixel
+  for (uint32_t y = 0; y < depth.height; ++y) {
+    for (uint32_t x = 0; x < depth.width; ++x) {
+      const uint8_t* rgba = &depth.rgba[(size_t(y) * depth.width + x) * 4];
+      uint8_t* bgr = &out[pixels_at + size_t(y) * row_bytes + x * 3];
+      bool seen = rgba[3] != 0;
+      bgr[0] = seen ? rgba[2] : 0x80;
+      bgr[1] = seen ? rgba[1] : 0x80;
+      bgr[2] = seen ? rgba[0] : 0x80;
+    }
+  }
+  return out;
+}
+
 }  // namespace motion
 }  // namespace hid
 }  // namespace xe

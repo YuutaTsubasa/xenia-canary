@@ -61,4 +61,25 @@ TEST_CASE("A depth picture becomes a grey bitmap, top row first",
   REQUIRE(DepthToBitmap(DepthImage()).empty());
 }
 
+TEST_CASE("A coloured picture becomes a 24-bit bitmap, top row first",
+          "[motion][depth_picture]") {
+  DepthImage picture = SmallPicture();
+  // Without colour there is nothing to save.
+  REQUIRE(ColourToBitmap(picture).empty());
+  picture.rgba.assign(picture.millimetres.size() * 4, 0);
+  picture.rgba[0] = 10;  // top-left: R G B = 10 20 30
+  picture.rgba[1] = 20;
+  picture.rgba[2] = 30;
+  picture.rgba[3] = 255;
+  std::vector<uint8_t> bmp = ColourToBitmap(picture);
+  // Rows of 5 pixels (15 bytes) are padded to 16.
+  const size_t pixels_at = 14 + 40;
+  REQUIRE(bmp.size() == pixels_at + 16 * 3);
+  REQUIRE(bmp[28] == 24);
+  REQUIRE(bmp[pixels_at + 0] == 30);  // stored B G R
+  REQUIRE(bmp[pixels_at + 1] == 20);
+  REQUIRE(bmp[pixels_at + 2] == 10);
+  REQUIRE(bmp[pixels_at + 3] == 0x80);  // no colour: grey
+}
+
 }  // namespace xe::hid::motion::test

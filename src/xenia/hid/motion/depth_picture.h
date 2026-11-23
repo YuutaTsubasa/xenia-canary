@@ -41,6 +41,11 @@ DepthSummary SummarizeDepth(const DepthImage& depth);
 // reading is black. Empty if the picture is.
 std::vector<uint8_t> DepthToBitmap(const DepthImage& depth);
 
+// The picture's colour (DepthImage::rgba) as a 24-bit Windows bitmap,
+// top row first; pixels without colour are mid grey. This is what the
+// colour frames the title gets are made from. Empty if there is no colour.
+std::vector<uint8_t> ColourToBitmap(const DepthImage& depth);
+
 }  // namespace motion
 }  // namespace hid
 }  // namespace xe
