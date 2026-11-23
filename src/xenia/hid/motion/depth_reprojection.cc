@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
 namespace xe {
 namespace hid {
@@ -80,6 +81,12 @@ DepthImage ReprojectDepth(const DepthImage& source,
   target.height = target_height;
   target.lens = target_lens;
   target.millimetres.assign(size_t(target_width) * target_height, 0);
+  // The colour goes with the depth: a target pixel takes the colour of the
+  // point that won it.
+  const bool with_colour = source.has_colour();
+  if (with_colour) {
+    target.rgba.assign(target.millimetres.size() * 4, 0);
+  }
 
   const size_t pixel_count = size_t(source.width) * source.height;
   if (source.millimetres.size() != pixel_count || !target_lens.valid()) {
@@ -156,9 +163,14 @@ DepthImage ReprojectDepth(const DepthImage& source,
           if (tx < 0 || tx >= int(target_width)) {
             continue;
           }
-          uint16_t& cell = target.millimetres[size_t(ty) * target_width + tx];
+          size_t cell_index = size_t(ty) * target_width + tx;
+          uint16_t& cell = target.millimetres[cell_index];
           if (!cell || out_mm < cell) {
             cell = uint16_t(out_mm);  // the nearest point wins
+            if (with_colour) {
+              std::memcpy(&target.rgba[cell_index * 4],
+                          &source.rgba[index * 4], 4);
+            }
           }
         }
       }

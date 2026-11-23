@@ -61,8 +61,15 @@ struct DepthImage {
   // A device that knows them exactly (the Kinect v2 SDK's depth-to-camera
   // table) fills these; otherwise they are worked out from `lens`.
   std::vector<float> rays;
+  // Optional: the colour of each pixel's point, as the device's colour
+  // camera saw it: 8-bit R, G, B, A per pixel, in the same order as
+  // `millimetres`. A device with a colour camera lined up with its depth
+  // (the Kinect v2 SDK's depth-to-colour mapping) fills it. A = 0 means
+  // the colour camera did not see that point.
+  std::vector<uint8_t> rgba;
 
   bool empty() const { return millimetres.empty(); }
+  bool has_colour() const { return rgba.size() == millimetres.size() * 4; }
 };
 
 // A colour image: 8-bit R, G, B, A per pixel, rows packed top to bottom.

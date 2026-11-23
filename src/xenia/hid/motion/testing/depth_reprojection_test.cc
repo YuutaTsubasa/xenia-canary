@@ -7,6 +7,7 @@
  ******************************************************************************
  */
 
+#include <array>
 #include <cmath>
 #include <cstdlib>
 
@@ -111,6 +112,31 @@ TEST_CASE("The nearer surface wins where two land on one pixel",
   }
   REQUIRE(box_pixels >= 60);
   REQUIRE(box_pixels <= 65);
+}
+
+TEST_CASE("Colour goes with the point that wins a pixel",
+          "[motion][depth_reprojection]") {
+  // The scene of the test above, with the wall blue and the box red.
+  DepthImage scene = DrawScene(3000, 1000, 236, 276, 192, 232);
+  scene.rgba.resize(scene.millimetres.size() * 4);
+  for (size_t i = 0; i < scene.millimetres.size(); ++i) {
+    bool box = scene.millimetres[i] == 1000;
+    scene.rgba[i * 4 + 0] = box ? 255 : 0;
+    scene.rgba[i * 4 + 1] = 0;
+    scene.rgba[i * 4 + 2] = box ? 0 : 255;
+    scene.rgba[i * 4 + 3] = 255;
+  }
+  DepthImage v1 = ReprojectToV1Depth(scene);
+  REQUIRE(v1.has_colour());
+  auto colour = [&](uint32_t x, uint32_t y) {
+    const uint8_t* p = &v1.rgba[(size_t(y) * v1.width + x) * 4];
+    return std::array<int, 4>{p[0], p[1], p[2], p[3]};
+  };
+  REQUIRE(colour(320, 240) == std::array<int, 4>{255, 0, 0, 255});  // box
+  REQUIRE(colour(20, 20) == std::array<int, 4>{0, 0, 255, 255});    // wall
+
+  // Without colour in, none comes out.
+  REQUIRE_FALSE(ReprojectToV1Depth(DrawScene(2000)).has_colour());
 }
 
 TEST_CASE("Points behind the target camera are dropped",

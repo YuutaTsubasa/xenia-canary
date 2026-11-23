@@ -55,7 +55,8 @@ std::array<float, 2> RayToPixel(const CameraIntrinsics& lens, float x, float y);
 // nothing lands on are 0 (no reading); the target's own distortion is
 // ignored (an imaginary camera has none). Each source point covers as many
 // target pixels as its size there needs (up to 3x3), so a coarser source
-// does not leave a grid of holes.
+// does not leave a grid of holes. If `source` has colour, the target does
+// too: each pixel the colour of the point that won it (A = 0 where none).
 DepthImage ReprojectDepth(const DepthImage& source,
                           const CameraIntrinsics& target_lens,
                           uint32_t target_width, uint32_t target_height,
