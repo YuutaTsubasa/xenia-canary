@@ -111,4 +111,39 @@ TEST_CASE("A tilted virtual v1 looks up or down", "[motion][virtual_kinect_v1]")
   REQUIRE(turn(V1TiltPose(-25.0f), {0.3f, 0.0f, 1.0f})[0] == Approx(0.3f));
 }
 
+TEST_CASE("A colour frame is the picture through a GRBG Bayer filter",
+          "[motion][virtual_kinect_v1]") {
+  DepthImage depth = MakeDepth(kV1DepthWidth, kV1DepthHeight, 2000);
+  depth.rgba.resize(depth.millimetres.size() * 4);
+  for (size_t i = 0; i < depth.millimetres.size(); ++i) {
+    depth.rgba[i * 4 + 0] = 200;  // red
+    depth.rgba[i * 4 + 1] = 100;  // green
+    depth.rgba[i * 4 + 2] = 50;   // blue
+    depth.rgba[i * 4 + 3] = 255;
+  }
+  // One pixel the colour camera didn't see.
+  depth.rgba[(size_t(11) * kV1DepthWidth + 7) * 4 + 3] = 0;
+
+  std::vector<uint8_t> frame(kV1ColourFrameBytes, 0);
+  REQUIRE(EncodeV1ColourFrame(depth, frame));
+  auto at = [&](uint32_t x, uint32_t y) {
+    return frame[size_t(y) * kV1ColourWidth + x];
+  };
+  REQUIRE(at(0, 0) == 100);  // G R
+  REQUIRE(at(1, 0) == 200);
+  REQUIRE(at(0, 1) == 50);   // B G
+  REQUIRE(at(1, 1) == 100);
+  REQUIRE(at(638, 478) == 100);
+  REQUIRE(at(639, 479) == 100);
+  REQUIRE(at(7, 11) == kV1ColourGrey);
+
+  // Without colour, or at another size, nothing is written.
+  std::vector<uint8_t> untouched(kV1ColourFrameBytes, 7);
+  REQUIRE_FALSE(EncodeV1ColourFrame(
+      MakeDepth(kV1DepthWidth, kV1DepthHeight, 2000), untouched));
+  REQUIRE(untouched[0] == 7);
+  std::vector<uint8_t> two_bytes(kV1ColourFrameBytes * 2);
+  REQUIRE_FALSE(EncodeV1ColourFrame(depth, two_bytes));
+}
+
 }  // namespace xe::hid::motion::test

@@ -79,6 +79,34 @@ void FillV1DepthTable(std::span<uint16_t, kV1DepthTableEntries> table);
 // when `depth` is not 640x480 or `out` is not kV1DepthFrameBytes long.
 bool EncodeV1DepthFrame(const DepthImage& depth, std::span<uint8_t> out);
 
+// The colour frame a request code 5 read (colour stream) receives: one byte
+// a pixel, 640x480, the raw picture of the v1's colour sensor. Every title
+// in Free-Riders-Recompiled#421's logs asks for this size; one starting the
+// camera in its "Studio" mode (init flag 0x40) would ask for two bytes a
+// pixel, in a format not known yet.
+constexpr uint32_t kV1ColourWidth = 640;
+constexpr uint32_t kV1ColourHeight = 480;
+constexpr size_t kV1ColourFrameBytes =
+    size_t(kV1ColourWidth) * kV1ColourHeight;  // 307200
+// The grey written where the picture has no colour.
+constexpr uint8_t kV1ColourGrey = 0x80;
+
+// Writes the colour of `depth`, which must be a 640x480 image seen through
+// the virtual v1's depth lens with colour (DepthImage::rgba), as a code 5
+// colour frame. With the all-zero registration the camera reports
+// (request 11), the title takes colour pixel (x, y) to show what depth
+// pixel (x, y) shows, so the depth camera's view is the colour's too.
+//
+// The v1's colour sensor has a Bayer filter: each pixel sees one of red,
+// green or blue, in 2x2 tiles of G R on even rows and B G on odd rows
+// (GRBG, as libfreenect documents the Kinect v1's raw colour), and the
+// title works out the full colours itself. So each pixel here is the one
+// channel its place in the tile sees. Pixels without colour (A = 0) are
+// kV1ColourGrey. Sensor order, top row first, like the depth frame.
+// Returns false (writing nothing) when `depth` is not 640x480 with colour
+// or `out` is not kV1ColourFrameBytes long.
+bool EncodeV1ColourFrame(const DepthImage& depth, std::span<uint8_t> out);
+
 }  // namespace motion
 }  // namespace hid
 }  // namespace xe
