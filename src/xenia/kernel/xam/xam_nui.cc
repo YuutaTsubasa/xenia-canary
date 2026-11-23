@@ -593,6 +593,77 @@ dword_result_t XamUserNuiEnableBiometric_entry(dword_t user_index,
 }
 DECLARE_XAM_EXPORT1(XamUserNuiEnableBiometric, kNone, kStub);
 
+// Stored Kinect face data. A title's identity code reads what the console
+// learned of a player's face (XamReadBiometricData), and when there is none
+// it starts from nothing and later writes what it learned
+// (XamWriteBiometricData); docs/kinect-pscam.md section 14.7. Both answer
+// with a Win32 error code: 0 is success. Xenia had neither, and a missing
+// function returns without setting r3, so the title read its own first
+// argument as the answer and, when that looked like success, used data that
+// was never read: Fruit Ninja Kinect's identity thread crashed after these
+// calls. Xenia keeps no face data, so a read finds nothing and a write is
+// accepted and dropped.
+dword_result_t XamReadBiometricData_entry(qword_t id, lpdword_t sequence,
+                                          lpvoid_t buffer, lpdword_t size,
+                                          lpvoid_t overlapped) {
+  static std::atomic<uint32_t> count{0};
+  if (FirstIdentityCall(count)) {
+    XELOGI("XamReadBiometricData({:016X}): nothing stored",
+           uint64_t(id));
+  }
+  if (size) {
+    *size = 0;
+  }
+  if (overlapped) {
+    kernel_state()->CompleteOverlappedImmediate(overlapped.guest_address(),
+                                                X_ERROR_FILE_NOT_FOUND);
+    return X_ERROR_IO_PENDING;
+  }
+  return X_ERROR_FILE_NOT_FOUND;
+}
+DECLARE_XAM_EXPORT1(XamReadBiometricData, kNone, kStub);
+
+dword_result_t XamWriteBiometricData_entry(qword_t id, lpdword_t sequence,
+                                           lpvoid_t buffer, lpdword_t size,
+                                           lpvoid_t overlapped) {
+  static std::atomic<uint32_t> count{0};
+  if (FirstIdentityCall(count)) {
+    XELOGI("XamWriteBiometricData({:016X}, {} bytes): accepted, not kept",
+           uint64_t(id), size ? uint32_t(*size) : 0u);
+  }
+  if (overlapped) {
+    kernel_state()->CompleteOverlappedImmediate(overlapped.guest_address(),
+                                                X_ERROR_SUCCESS);
+    return X_ERROR_IO_PENDING;
+  }
+  return X_ERROR_SUCCESS;
+}
+DECLARE_XAM_EXPORT1(XamWriteBiometricData, kNone, kStub);
+
+// The XAM file cache. The identity code opens its cached files with
+// XamCacheOpenFile (one record each; 0 is success, and on failure it
+// forgets the file), then calls XamCacheReset and XamCacheCloseFile for the
+// ones it opened. Xenia has no file cache, so nothing opens, and resetting
+// and closing succeed.
+dword_result_t XamCacheOpenFile_entry(lpvoid_t record) {
+  static std::atomic<uint32_t> count{0};
+  if (FirstIdentityCall(count)) {
+    XELOGI("XamCacheOpenFile: no file cache, nothing opened");
+  }
+  return X_ERROR_FILE_NOT_FOUND;
+}
+DECLARE_XAM_EXPORT1(XamCacheOpenFile, kNone, kStub);
+
+dword_result_t XamCacheCloseFile_entry(lpvoid_t record, dword_t flags) {
+  return X_ERROR_SUCCESS;
+}
+DECLARE_XAM_EXPORT1(XamCacheCloseFile, kNone, kStub);
+
+dword_result_t XamCacheReset_entry(dword_t cache_type) {
+  return X_ERROR_SUCCESS;
+}
+DECLARE_XAM_EXPORT1(XamCacheReset, kNone, kStub);
+
 struct X_NUI_PLAYER_ENGAGEMENT_UPDATE {
   uint8_t data[0x1C];
 };

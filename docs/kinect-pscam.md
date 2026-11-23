@@ -884,7 +884,15 @@ So no title ever gets a learned face, and the skeleton's entry stays -5 or -1. T
 * The head crop (`sub_82774070` → `sub_82779E30` → `sub_82782368`) reads a picture of **4 bytes a pixel** and turns it grey through three 256-entry lookup tables, one for each of bytes 0, 1 and 2 (byte 3 unused): grey = (T[b0] + T[256+b1] + T[512+b2]) >> 8. So by then the library has made full colour out of the camera's frame itself.
 * The camera's frame is smaller: every title in the #421 logs (EA SPORTS Active 2, Game Party, Just Dance 3, Kinectimals, Kinect Sports: Season Two, UFC) asks for **307,200 bytes**, 640x480 at one byte a pixel (bpp 1; init flag 0x40 would make it 2). That is the Kinect v1's raw colour: a Bayer mosaic. libfreenect documents its order as GRBG. No CPU demosaic was found, so the library most likely does it on the GPU, in the pass that also gets the colour slot offsets (section 11 Q6).
 * Where the head is in the picture comes from the skeleton: a joint goes to depth pixels (`sub_82772210`) and then to colour pixels (`sub_82771480` → `sub_82766FB8`, the registration). With the all-zero registration the camera returns for code 11, colour pixel = depth pixel (in sensor order). So the colour frame should show what the virtual v1's depth camera shows.
-* What Xenia hands over (log rows 51 to 55): the device's colour carried with each depth pixel through the reprojection, written as a GRBG mosaic in sensor order, grey where there is no colour. A wrong tile order would only change the colours, not the brightness the face code works on.
+* What Xenia hands over (log rows 51 to 56): the device's colour carried with each depth pixel through the reprojection, written as a GRBG mosaic in sensor order, grey where there is no colour. A wrong tile order would only change the colours, not the brightness the face code works on.
+
+### 7. Stored face data and the file cache [seen]
+
+The identity code also asks XAM for what the console already learned of a player, through four exports Xenia did not have (every title in the #421 logs calls the first two):
+* `XamReadBiometricData(id, &sequence, buffer, &size, overlapped)` (Free Riders `sub_82775110`, `sub_82776A78`): a Win32 error code, 0 = read. On an error it starts from nothing, then `XamUserNuiEnableBiometric(user, 1)` and `XamWriteBiometricData(id, &sequence, buffer, &size, overlapped)` store what it learned.
+* `XamCacheOpenFile(record)` (`sub_82776980`), one record of 584 bytes per cached file: 0 = opened; otherwise it clears the record's handle (+16). Then `XamCacheReset(24)` and `XamCacheCloseFile(record, 0)` for each record still holding a handle.
+
+A missing export returns without setting r3, so the title reads whatever r3 held (its own first argument) as the result. For the cache that looks like failure; for the biometric read it can look like success, and then the title uses a buffer nothing was read into. Fruit Ninja Kinect's identity thread crashed (host access violation) right after these calls (test build 9). Xenia now answers: read → 2 (not found), write → 0 (accepted, not kept), open → 2, reset and close → 0 (log row 57).
 
 ### Open questions
 
