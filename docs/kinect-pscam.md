@@ -879,6 +879,13 @@ What the logs show, decoded:
 
 So no title ever gets a learned face, and the skeleton's entry stays -5 or -1. The likely reason: the colour picture is the plain grey of row 47 in the log, so there is no face to find. On a console the face comes from the real colour camera. Getting real colour to the title (Kinect v2's colour stream, or the webcam, converted to the 360's colour format, which is still open: Bayer or YUV, section "Open questions" above) is the next step. Faking the result instead would mean writing into the title's own memory, which differs per game.
 
+### 6. The colour picture the face code reads [seen]
+
+* The head crop (`sub_82774070` → `sub_82779E30` → `sub_82782368`) reads a picture of **4 bytes a pixel** and turns it grey through three 256-entry lookup tables, one for each of bytes 0, 1 and 2 (byte 3 unused): grey = (T[b0] + T[256+b1] + T[512+b2]) >> 8. So by then the library has made full colour out of the camera's frame itself.
+* The camera's frame is smaller: every title in the #421 logs (EA SPORTS Active 2, Game Party, Just Dance 3, Kinectimals, Kinect Sports: Season Two, UFC) asks for **307,200 bytes**, 640x480 at one byte a pixel (bpp 1; init flag 0x40 would make it 2). That is the Kinect v1's raw colour: a Bayer mosaic. libfreenect documents its order as GRBG. No CPU demosaic was found, so the library most likely does it on the GPU, in the pass that also gets the colour slot offsets (section 11 Q6).
+* Where the head is in the picture comes from the skeleton: a joint goes to depth pixels (`sub_82772210`) and then to colour pixels (`sub_82771480` → `sub_82766FB8`, the registration). With the all-zero registration the camera returns for code 11, colour pixel = depth pixel (in sensor order). So the colour frame should show what the virtual v1's depth camera shows.
+* What Xenia hands over (log rows 51 to 55): the device's colour carried with each depth pixel through the reprojection, written as a GRBG mosaic in sensor order, grey where there is no colour. A wrong tile order would only change the colours, not the brightness the face code works on.
+
 ### Open questions
 
 * Which callback message the console sends when it recognises a signed-in player (0x2C006 is the likely one), and what `entry` and `flags` should be. Entry looks like the enrollment index (0..7).
