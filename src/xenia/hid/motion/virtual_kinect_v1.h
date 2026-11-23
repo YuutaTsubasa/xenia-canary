@@ -103,8 +103,12 @@ constexpr uint8_t kV1ColourGrey = 0x80;
 // title works out the full colours itself. So each pixel here is the one
 // channel its place in the tile sees. Pixels without colour (A = 0) are
 // kV1ColourGrey. Sensor order, top row first, like the depth frame.
+// A title that asks for two bytes a pixel (Dance Central: 614400 bytes)
+// gets the picture as YUV 4:2:2 instead, in the byte order libfreenect
+// documents for the v1's raw YUV mode, U Y0 V Y1 for each pair of pixels
+// (full-range BT.601). Grey is 0x80 there too.
 // Returns false (writing nothing) when `depth` is not 640x480 with colour
-// or `out` is not kV1ColourFrameBytes long.
+// or `out` is neither kV1ColourFrameBytes nor twice that long.
 bool EncodeV1ColourFrame(const DepthImage& depth, std::span<uint8_t> out);
 
 }  // namespace motion

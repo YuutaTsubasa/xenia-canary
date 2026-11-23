@@ -7,6 +7,7 @@
  ******************************************************************************
  */
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <vector>
@@ -142,8 +143,39 @@ TEST_CASE("A colour frame is the picture through a GRBG Bayer filter",
   REQUIRE_FALSE(EncodeV1ColourFrame(
       MakeDepth(kV1DepthWidth, kV1DepthHeight, 2000), untouched));
   REQUIRE(untouched[0] == 7);
-  std::vector<uint8_t> two_bytes(kV1ColourFrameBytes * 2);
-  REQUIRE_FALSE(EncodeV1ColourFrame(depth, two_bytes));
+  std::vector<uint8_t> three_bytes(kV1ColourFrameBytes * 3);
+  REQUIRE_FALSE(EncodeV1ColourFrame(depth, three_bytes));
+}
+
+TEST_CASE("A two-byte colour frame is the picture as UYVY",
+          "[motion][virtual_kinect_v1]") {
+  DepthImage depth = MakeDepth(kV1DepthWidth, kV1DepthHeight, 2000);
+  depth.rgba.assign(depth.millimetres.size() * 4, 255);  // white
+  // Pixels 0 and 1 of row 0: red and blue.
+  const uint8_t red[] = {255, 0, 0, 255}, blue[] = {0, 0, 255, 255};
+  std::copy_n(red, 4, &depth.rgba[0]);
+  std::copy_n(blue, 4, &depth.rgba[4]);
+  // Pixels 2 and 3 of row 5: no colour at all.
+  depth.rgba[(size_t(5) * kV1DepthWidth + 2) * 4 + 3] = 0;
+  depth.rgba[(size_t(5) * kV1DepthWidth + 3) * 4 + 3] = 0;
+
+  std::vector<uint8_t> frame(kV1ColourFrameBytes * 2, 0);
+  REQUIRE(EncodeV1ColourFrame(depth, frame));
+  // U Y0 V Y1: the luma of each pixel, the chroma of the pair's average.
+  REQUIRE(frame[1] == 76);   // red's luma
+  REQUIRE(frame[3] == 29);   // blue's luma
+  REQUIRE(frame[0] > 128);   // half blue: U above the middle
+  REQUIRE(frame[2] > 128);   // half red: V above the middle
+  // White is full luma, no chroma.
+  size_t white = (size_t(1) * kV1ColourWidth + 0) * 2;
+  REQUIRE(frame[white + 0] == 128);
+  REQUIRE(frame[white + 1] == 255);
+  REQUIRE(frame[white + 2] == 128);
+  REQUIRE(frame[white + 3] == 255);
+  size_t unseen = (size_t(5) * kV1ColourWidth + 2) * 2;
+  for (int i = 0; i < 4; ++i) {
+    REQUIRE(frame[unseen + i] == kV1ColourGrey);
+  }
 }
 
 }  // namespace xe::hid::motion::test

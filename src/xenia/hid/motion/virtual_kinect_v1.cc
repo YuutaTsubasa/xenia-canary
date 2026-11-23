@@ -64,9 +64,53 @@ bool EncodeV1DepthFrame(const DepthImage& depth, std::span<uint8_t> out) {
   return true;
 }
 
+namespace {
+
+// Full-range BT.601 (as JPEG uses), rounded and kept in 0..255.
+uint8_t ToByte(float value) {
+  return uint8_t(std::clamp(value + 0.5f, 0.0f, 255.0f));
+}
+float Luma(const uint8_t* rgba) {
+  return 0.299f * rgba[0] + 0.587f * rgba[1] + 0.114f * rgba[2];
+}
+
+void EncodeUyvy(const DepthImage& depth, std::span<uint8_t> out) {
+  for (uint32_t y = 0; y < kV1ColourHeight; ++y) {
+    for (uint32_t x = 0; x < kV1ColourWidth; x += 2) {
+      size_t i = size_t(y) * kV1ColourWidth + x;
+      const uint8_t* left = &depth.rgba[i * 4];
+      const uint8_t* right = left + 4;
+      uint8_t* pair = &out[i * 2];
+      if (!left[3] && !right[3]) {
+        std::fill_n(pair, 4, kV1ColourGrey);
+        continue;
+      }
+      // A pixel the colour camera didn't see borrows its neighbour's colour.
+      if (!left[3]) left = right;
+      if (!right[3]) right = left;
+      float r = (left[0] + right[0]) * 0.5f;
+      float g = (left[1] + right[1]) * 0.5f;
+      float b = (left[2] + right[2]) * 0.5f;
+      pair[0] = ToByte(128.0f - 0.168736f * r - 0.331264f * g + 0.5f * b);
+      pair[1] = ToByte(Luma(left));
+      pair[2] = ToByte(128.0f + 0.5f * r - 0.418688f * g - 0.081312f * b);
+      pair[3] = ToByte(Luma(right));
+    }
+  }
+}
+
+}  // namespace
+
 bool EncodeV1ColourFrame(const DepthImage& depth, std::span<uint8_t> out) {
   if (depth.width != kV1ColourWidth || depth.height != kV1ColourHeight ||
-      !depth.has_colour() || out.size() != kV1ColourFrameBytes) {
+      !depth.has_colour()) {
+    return false;
+  }
+  if (out.size() == kV1ColourFrameBytes * 2) {
+    EncodeUyvy(depth, out);
+    return true;
+  }
+  if (out.size() != kV1ColourFrameBytes) {
     return false;
   }
   for (uint32_t y = 0; y < kV1ColourHeight; ++y) {
