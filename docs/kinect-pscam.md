@@ -859,6 +859,26 @@ Every message here is async (XMsgStartIORequest), except 0x2C009 and 0x2C00C. Al
 
 So XAM sees every tracked skeleton and its tracking id. That is how a console's XAM would know whom to identify and which `trackingId` to put in 0x2C006.
 
+### 5. What 0x2C006 starts, and what comes back (0x2C003) [seen]
+
+Test build 9 logs (Free-Riders-Recompiled#421) show every title answering the 0x2C006 announcement with a message **to** XAM, 0x2C003, a few frames later. Tracing it in Sonic Free Riders:
+
+* The callback's job kinds are not what the names suggested. 0x2C006 (kind 2, flags always get bit 0) is **enroll**: learn the face of this skeleton into an identity entry. 0x2C007 (kind 1) is **identify**: compare this skeleton's face against the entries already learned. 0x2C008 is kind 6.
+* The worker `sub_82777988` runs each job on every frame. It needs the skeleton still tracked, then finds the head in the colour picture (`sub_82774070`), and when the job's +104 is 2 it analyses the face (`sub_8277E5A0`) and keeps the sample (`sub_82772718`). Kind 1 then calls the matcher `sub_82776410`, kind 2 with bit 0 the enroller `sub_82776268`.
+* The enroller finishes only once enough face samples are in (`sub_8277EA60`): it then stores them into the entry, marks the entry as holding data, and the result's entry (+24) is that entry. The matcher scores the face against each entry in state 1 that holds data.
+* `sub_82775348` reports the result to XAM: kind 2 as **0x2C003**, kind 1 as 0x2C004, kind 6 as 0x2C005. The 24 bytes are {hr, tracking id, entry, flag, 64-bit id}. It also writes the entry into the skeleton slot (+320): an entry 0..7 on success, -1 if the skeleton was lost (hr 0x83010008), -5 otherwise. -4 means "being worked on".
+
+What the logs show, decoded:
+
+| Game | 0x2C003 | Meaning |
+| --- | --- | --- |
+| EA SPORTS Active 2, Game Party, Kinectimals | 0, entry -5 | the job ended without learning a face |
+| UFC Personal Trainer | 0x80004004, entry -5 | the job was abandoned |
+| Kinect Sports: Season Two | 0x83010008, entry -1 | the skeleton was no longer tracked when it ended |
+| Just Dance 3 | 0x83010008, then 0x80004004 | both; it plays anyway, so it only needs the announcement |
+
+So no title ever gets a learned face, and the skeleton's entry stays -5 or -1. The likely reason: the colour picture is the plain grey of row 47 in the log, so there is no face to find. On a console the face comes from the real colour camera. Getting real colour to the title (Kinect v2's colour stream, or the webcam, converted to the 360's colour format, which is still open: Bayer or YUV, section "Open questions" above) is the next step. Faking the result instead would mean writing into the title's own memory, which differs per game.
+
 ### Open questions
 
 * Which callback message the console sends when it recognises a signed-in player (0x2C006 is the likely one), and what `entry` and `flags` should be. Entry looks like the enrollment index (0..7).
