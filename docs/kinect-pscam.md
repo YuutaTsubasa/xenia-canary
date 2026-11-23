@@ -879,11 +879,22 @@ What the logs show, decoded:
 
 So no title ever gets a learned face, and the skeleton's entry stays -5 or -1. The likely reason: the colour picture is the plain grey of row 47 in the log, so there is no face to find. On a console the face comes from the real colour camera. Getting real colour to the title (Kinect v2's colour stream, or the webcam, converted to the 360's colour format, which is still open: Bayer or YUV, section "Open questions" above) is the next step. Faking the result instead would mean writing into the title's own memory, which differs per game.
 
+Test build 10 (real colour on a Kinect v2) ends the same way: hr 0, entry -5, with word 4 = 0 (Game Party), 9 (EA SPORTS Active 2), 0x11 (Kinectimals; it was 1 on build 9), 0x10 (UFC, hr 0x80004004). What those are, traced further in Free Riders:
+
+* **hr 0 with entry -5 is a timeout.** At the end of every worker pass `sub_82776F58` compares the time since the job began (ms, from `sub_824D1B98`) with the job's limit (`sub_82772A48`, a runtime table) and, once it is past, reports entry -5 with hr 0. The enroller never had enough samples. [seen]
+* **A sample is taken only when a face is found in the head crop.** job+104 becomes 2 only when the face finder in `sub_82774070` succeeds (0x82774304–0x82774344); then `sub_8277E5A0` analyses it. [seen]
+* **Word 4 is job+64, the reasons that kept coming back.** `sub_82773380` keeps four status words of each frame in a 16-frame ring (job+68 & 0x7A from the skeleton checks `sub_8277AB10`; job+72 & 0x381 from the head rectangle and face finder; job+76 & 0x780 from face analysis; job+80 & 0x1800 from crop quality) and sets a bit in job+64 once it was set in more frames than a threshold. [seen]
+  * bit 0: **no face found** in the head crop (`sub_827805A0`, the detector's call failed). [seen]
+  * bits 3 and 4: a joint, probably a hand, close to the head on one side or the other; bit 4 also skips face analysis that frame. [seen; hands inf]
+  * bits 5, 6: too far, too close. Bits 7 to 9: the head rectangle clipped. None of these show up. [seen]
+* So on build 10 the colour reached the title but no face was found in it. Next: look at the picture itself (log row 59 saves it), and whether the texture the face code reads (the colour record's +100 buffer, a GPU texture `sub_825E16A0` describes) follows our frames. [inf]
+
 ### 6. The colour picture the face code reads [seen]
 
 * The head crop (`sub_82774070` → `sub_82779E30` → `sub_82782368`) reads a picture of **4 bytes a pixel** and turns it grey through three 256-entry lookup tables, one for each of bytes 0, 1 and 2 (byte 3 unused): grey = (T[b0] + T[256+b1] + T[512+b2]) >> 8. So by then the library has made full colour out of the camera's frame itself.
 * The camera's frame is smaller: every title in the #421 logs (EA SPORTS Active 2, Game Party, Just Dance 3, Kinectimals, Kinect Sports: Season Two, UFC) asks for **307,200 bytes**, 640x480 at one byte a pixel (bpp 1; init flag 0x40 would make it 2). That is the Kinect v1's raw colour: a Bayer mosaic. libfreenect documents its order as GRBG. No CPU demosaic was found, so the library most likely does it on the GPU, in the pass that also gets the colour slot offsets (section 11 Q6).
 * Where the head is in the picture comes from the skeleton: a joint goes to depth pixels (`sub_82772210`) and then to colour pixels (`sub_82771480` → `sub_82766FB8`, the registration). With the all-zero registration the camera returns for code 11, colour pixel = depth pixel (in sensor order). So the colour frame should show what the virtual v1's depth camera shows.
+* Dance Central asks for 614,400 bytes (bpp 2). That is the v1's raw YUV 4:2:2; libfreenect documents U Y0 V Y1. Xenia fills it that way (log row 58), untested in the game.
 * What Xenia hands over (log rows 51 to 56): the device's colour carried with each depth pixel through the reprojection, written as a GRBG mosaic in sensor order, grey where there is no colour. A wrong tile order would only change the colours, not the brightness the face code works on.
 
 ### 7. Stored face data and the file cache [seen]
