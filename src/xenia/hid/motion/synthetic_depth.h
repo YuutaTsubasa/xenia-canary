@@ -47,6 +47,17 @@ struct SyntheticRoom {
 // range every pixel sees something; one that saw nothing would read 0.
 DepthImage DrawSyntheticDepth(const Body* body, const SyntheticRoom& room);
 
+// The colour of each pixel of a DrawSyntheticDepth picture
+// (DepthImage::rgba), from the webcam `picture` the body was found in. The
+// webcam stands level where the virtual v1 does, looking the same way, as
+// BodyPlacement assumes, with an ideal lens `fov_degrees` wide; so each v1
+// pixel's ray, turned by the room's tilt, falls on one webcam pixel, and
+// takes its colour. `mirrored` is the picture's being mirrored, as for
+// PoseToBody. Pixels whose ray falls outside the picture get A = 0.
+std::vector<uint8_t> SyntheticDepthColour(const ColourImage& picture,
+                                          bool mirrored, float fov_degrees,
+                                          const SyntheticRoom& room);
+
 }  // namespace motion
 }  // namespace hid
 }  // namespace xe

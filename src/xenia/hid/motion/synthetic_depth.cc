@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <limits>
 #include <numbers>
 
@@ -217,6 +218,53 @@ DepthImage DrawSyntheticDepth(const Body* body, const SyntheticRoom& room) {
             : 0;
   }
   return depth;
+}
+
+std::vector<uint8_t> SyntheticDepthColour(const ColourImage& picture,
+                                          bool mirrored, float fov_degrees,
+                                          const SyntheticRoom& room) {
+  const CameraIntrinsics lens = V1DepthLens();
+  const uint32_t width = kV1DepthWidth, height = kV1DepthHeight;
+  std::vector<uint8_t> rgba(size_t(width) * height * 4, 0);
+  if (!picture.width || !picture.height ||
+      picture.rgba.size() != size_t(picture.width) * picture.height * 4) {
+    return rgba;
+  }
+  const float tilt = room.tilt_degrees * std::numbers::pi_v<float> / 180.0f;
+  const float tilt_cos = std::cos(tilt), tilt_sin = std::sin(tilt);
+  // The webcam's ideal lens, as BodyPlacement and the device take it.
+  const float focal = 0.5f * float(picture.width) /
+                      std::tan(fov_degrees * std::numbers::pi_v<float> / 360.0f);
+  const float centre_x = 0.5f * float(picture.width);
+  const float centre_y = 0.5f * float(picture.height);
+
+  for (uint32_t v = 0; v < height; ++v) {
+    for (uint32_t u = 0; u < width; ++u) {
+      auto ray = PixelToRay(lens, float(u) + 0.5f, float(v) + 0.5f);
+      // Through the tilted v1's lens into the room, as DrawSyntheticDepth
+      // does, then into the level webcam's lens (+x right, +y down).
+      float up = -ray[1];
+      float level_up = up * tilt_cos + tilt_sin;
+      float ahead = -up * tilt_sin + tilt_cos;
+      if (ahead <= 0.0f) {
+        continue;
+      }
+      float x = focal * ray[0] / ahead + centre_x;
+      float y = focal * -level_up / ahead + centre_y;
+      if (mirrored) {
+        x = float(picture.width) - x;
+      }
+      if (x < 0.0f || y < 0.0f || x >= float(picture.width) ||
+          y >= float(picture.height)) {
+        continue;
+      }
+      size_t from = (size_t(y) * picture.width + size_t(x)) * 4;
+      size_t to = (size_t(v) * width + u) * 4;
+      std::memcpy(&rgba[to], &picture.rgba[from], 3);
+      rgba[to + 3] = 255;
+    }
+  }
+  return rgba;
 }
 
 }  // namespace motion

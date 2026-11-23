@@ -137,4 +137,51 @@ TEST_CASE("A tilted sensor sees the same room from another angle",
   REQUIRE(std::abs(At(depth, 320, 240) - floor) < 15.0f);
 }
 
+TEST_CASE("The webcam's picture colours the drawn depth",
+          "[motion][synthetic_depth]") {
+  // A 160x120 picture, left half red, right half blue, top row green.
+  ColourImage picture;
+  picture.width = 160;
+  picture.height = 120;
+  picture.rgba.resize(size_t(160) * 120 * 4);
+  for (uint32_t y = 0; y < 120; ++y) {
+    for (uint32_t x = 0; x < 160; ++x) {
+      uint8_t* p = &picture.rgba[(size_t(y) * 160 + x) * 4];
+      p[0] = x < 80 ? 255 : 0;
+      p[1] = y == 0 ? 255 : 0;
+      p[2] = x < 80 ? 0 : 255;
+      p[3] = 255;
+    }
+  }
+  SyntheticRoom room;
+  auto red = [](const std::vector<uint8_t>& rgba, uint32_t x, uint32_t y) {
+    return rgba[(size_t(y) * kV1DepthWidth + x) * 4];
+  };
+  auto seen = [](const std::vector<uint8_t>& rgba, uint32_t x, uint32_t y) {
+    return rgba[(size_t(y) * kV1DepthWidth + x) * 4 + 3] != 0;
+  };
+
+  // Same width of view: the v1's left half is the picture's left half.
+  auto same = SyntheticDepthColour(picture, false, 58.5f, room);
+  REQUIRE(same.size() == size_t(kV1DepthWidth) * kV1DepthHeight * 4);
+  REQUIRE(red(same, 100, 240) == 255);
+  REQUIRE(red(same, 540, 240) == 0);
+  REQUIRE(seen(same, 0, 0));
+  // Mirrored, the halves swap.
+  auto flipped = SyntheticDepthColour(picture, true, 58.5f, room);
+  REQUIRE(red(flipped, 100, 240) == 0);
+  REQUIRE(red(flipped, 540, 240) == 255);
+  // A narrower webcam doesn't reach the v1's edges.
+  auto narrow = SyntheticDepthColour(picture, false, 40.0f, room);
+  REQUIRE_FALSE(seen(narrow, 0, 240));
+  REQUIRE(seen(narrow, 320, 240));
+  // Tilted down, the v1 looks below the picture's middle: its top rows
+  // are no longer the picture's top.
+  room.tilt_degrees = -10.0f;
+  auto down = SyntheticDepthColour(picture, false, 58.5f, room);
+  REQUIRE(seen(down, 320, 479) == false);
+  REQUIRE(seen(down, 320, 0));
+  REQUIRE(down[(size_t(0) * kV1DepthWidth + 320) * 4 + 1] == 0);
+}
+
 }  // namespace xe::hid::motion::test

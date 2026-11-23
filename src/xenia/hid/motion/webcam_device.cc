@@ -216,6 +216,9 @@ void WebcamDevice::Capture() {
 
     room.tilt_degrees = view_tilt_;
     DepthImage depth = DrawSyntheticDepth(have_body ? &body : nullptr, room);
+    // The webcam's own picture as the colour of what the virtual v1 sees,
+    // for titles' Kinect identity code to find the player's face in.
+    depth.rgba = SyntheticDepthColour(picture, mirrored, fov, room);
     {
       std::lock_guard<std::mutex> guard(lock_);
       newest_.number = ++frame_number;
