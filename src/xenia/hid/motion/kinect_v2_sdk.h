@@ -90,6 +90,56 @@ struct IDepthFrameSource : public IUnknown {
   get_FrameDescription(IFrameDescription** description) = 0;
 };
 
+// ColorImageFormat.
+enum class ColorImageFormat : int {
+  kNone = 0,
+  kRgba = 1,
+  kYuv = 2,
+  kBgra = 3,
+  kBayer = 4,
+  kYuy2 = 5,
+};
+
+struct IColorFrame : public IUnknown {
+  virtual HRESULT STDMETHODCALLTYPE
+  get_RawColorImageFormat(ColorImageFormat* format) = 0;
+  virtual HRESULT STDMETHODCALLTYPE
+  get_FrameDescription(IFrameDescription** description) = 0;
+  virtual HRESULT STDMETHODCALLTYPE CopyRawFrameDataToArray(UINT capacity,
+                                                            BYTE* data) = 0;
+  virtual HRESULT STDMETHODCALLTYPE
+  AccessRawUnderlyingBuffer(UINT* capacity, BYTE** buffer) = 0;
+  // Converts the camera's own format (YUY2) into `format` as it copies.
+  virtual HRESULT STDMETHODCALLTYPE CopyConvertedFrameDataToArray(
+      UINT capacity, BYTE* data, ColorImageFormat format) = 0;
+};
+
+struct IColorFrameReader : public IUnknown {
+  virtual HRESULT STDMETHODCALLTYPE
+  SubscribeFrameArrived(WaitableHandle* handle) = 0;
+  virtual HRESULT STDMETHODCALLTYPE
+  UnsubscribeFrameArrived(WaitableHandle handle) = 0;
+  virtual HRESULT STDMETHODCALLTYPE
+  GetFrameArrivedEventData(WaitableHandle handle, IUnknown** event_data) = 0;
+  // Fails (E_PENDING) when no frame has come since the last one.
+  virtual HRESULT STDMETHODCALLTYPE AcquireLatestFrame(IColorFrame** frame) = 0;
+};
+
+struct IColorFrameSource : public IUnknown {
+  virtual HRESULT STDMETHODCALLTYPE
+  SubscribeFrameCaptured(WaitableHandle* handle) = 0;
+  virtual HRESULT STDMETHODCALLTYPE
+  UnsubscribeFrameCaptured(WaitableHandle handle) = 0;
+  virtual HRESULT STDMETHODCALLTYPE
+  GetFrameCapturedEventData(WaitableHandle handle, IUnknown** event_data) = 0;
+  virtual HRESULT STDMETHODCALLTYPE get_IsActive(BOOLEAN* active) = 0;
+  virtual HRESULT STDMETHODCALLTYPE OpenReader(IColorFrameReader** reader) = 0;
+  virtual HRESULT STDMETHODCALLTYPE CreateFrameDescription(
+      ColorImageFormat format, IFrameDescription** description) = 0;
+  virtual HRESULT STDMETHODCALLTYPE
+  get_FrameDescription(IFrameDescription** description) = 0;
+};
+
 struct ICoordinateMapper : public IUnknown {
   virtual HRESULT STDMETHODCALLTYPE
   SubscribeCoordinateMappingChanged(WaitableHandle* handle) = 0;
@@ -147,7 +197,8 @@ struct IKinectSensor : public IUnknown {
   // Whether a sensor is plugged in and working; it takes a few seconds
   // after Open.
   virtual HRESULT STDMETHODCALLTYPE get_IsAvailable(BOOLEAN* available) = 0;
-  virtual HRESULT STDMETHODCALLTYPE get_ColorFrameSource(IUnknown** source) = 0;
+  virtual HRESULT STDMETHODCALLTYPE
+  get_ColorFrameSource(IColorFrameSource** source) = 0;
   virtual HRESULT STDMETHODCALLTYPE
   get_DepthFrameSource(IDepthFrameSource** source) = 0;
   virtual HRESULT STDMETHODCALLTYPE get_BodyFrameSource(IUnknown** source) = 0;

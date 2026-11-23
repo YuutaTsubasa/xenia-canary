@@ -154,8 +154,31 @@ void KinectV2Device::CaptureMain() {
     }
     XELOGI("Motion capture: Kinect v2 runtime loaded, depth {}x{}", width,
            height);
+    // The colour camera is optional: without it, depth alone still works.
+    // Its picture gives each depth pixel its colour (DepthImage::rgba), which
+    // titles' Kinect identity code needs to find the player's face.
+    ComPtr<kinect20::IColorFrameSource> colour_source;
+    ComPtr<kinect20::IColorFrameReader> colour_reader;
+    ComPtr<kinect20::IFrameDescription> colour_description;
+    int colour_width = 0, colour_height = 0;
+    if (FAILED(sensor->get_ColorFrameSource(&colour_source)) ||
+        FAILED(colour_source->OpenReader(&colour_reader)) ||
+        FAILED(colour_source->get_FrameDescription(&colour_description)) ||
+        FAILED(colour_description->get_Width(&colour_width)) ||
+        FAILED(colour_description->get_Height(&colour_height)) ||
+        colour_width <= 0 || colour_height <= 0) {
+      XELOGW("Motion capture: the Kinect v2's colour camera would not start; "
+             "going on with depth only");
+      colour_reader.Reset();
+    } else {
+      XELOGI("Motion capture: Kinect v2 colour {}x{}", colour_width,
+             colour_height);
+    }
 
     std::vector<uint16_t> depth(size_t(width) * height);
+    std::vector<uint8_t> colour;  // the newest colour picture, R G B A
+    std::vector<float> colour_points(size_t(width) * height * 2);
+    bool colour_logged = false;
     std::vector<float> rays;
     uint64_t frame_number = 0;
     bool running = false;
@@ -195,12 +218,41 @@ void KinectV2Device::CaptureMain() {
         SetStatus(MotionDeviceState::kRunning, "");
       }
 
+      if (colour_reader) {
+        // The colour camera runs on its own (30 frames a second, 15 in a
+        // dark room); keep its newest picture for the next depth frame.
+        ComPtr<kinect20::IColorFrame> colour_frame;
+        if (SUCCEEDED(colour_reader->AcquireLatestFrame(&colour_frame)) &&
+            colour_frame) {
+          colour.resize(size_t(colour_width) * colour_height * 4);
+          if (FAILED(colour_frame->CopyConvertedFrameDataToArray(
+                  UINT(colour.size()), colour.data(),
+                  kinect20::ColorImageFormat::kRgba))) {
+            colour.clear();
+          }
+        }
+      }
+
       ComPtr<kinect20::IDepthFrame> frame;
       if (FAILED(reader->AcquireLatestFrame(&frame)) || !frame ||
           FAILED(
               frame->CopyFrameDataToArray(UINT(depth.size()), depth.data()))) {
         std::this_thread::sleep_for(kFramePollInterval);
         continue;
+      }
+      std::vector<uint8_t> depth_colour;
+      if (!colour.empty() &&
+          SUCCEEDED(mapper->MapDepthFrameToColorSpace(
+              UINT(depth.size()), depth.data(), UINT(depth.size()),
+              reinterpret_cast<kinect20::ColorSpacePoint*>(
+                  colour_points.data())))) {
+        depth_colour = KinectV2ColourOnDepth(colour_points, colour,
+                                             uint32_t(colour_width),
+                                             uint32_t(colour_height));
+        if (!colour_logged) {
+          colour_logged = true;
+          XELOGI("Motion capture: Kinect v2 depth frames now carry colour");
+        }
       }
       std::lock_guard<std::mutex> guard(lock_);
       newest_.number = ++frame_number;
@@ -209,6 +261,7 @@ void KinectV2Device::CaptureMain() {
       newest_.depth.height = uint32_t(height);
       newest_.depth.lens = {};  // the rays say where each pixel looks
       newest_.depth.millimetres = depth;
+      newest_.depth.rgba = std::move(depth_colour);
       if (newest_.depth.rays.size() != rays.size()) {
         newest_.depth.rays = rays;
       }

@@ -44,6 +44,22 @@ std::vector<float> KinectV2TableToRays(std::span<const float> table);
 bool KinectV2TableLooksValid(std::span<const float> table, uint32_t width,
                              uint32_t height);
 
+// The Kinect v2's colour image size.
+constexpr uint32_t kV2ColourWidth = 1920;
+constexpr uint32_t kV2ColourHeight = 1080;
+
+// The colour of each depth pixel's point (DepthImage::rgba). `points` is
+// the SDK's depth-frame-to-colour mapping (ICoordinateMapper::
+// MapDepthFrameToColorSpace): for each depth pixel, X and Y, the place in
+// the colour image (`colour_rgba`, `colour_width` x `colour_height`, R G B
+// A) where the colour camera saw that point; pixel (0, 0)'s centre is at
+// (0, 0). A point the mapping has no place for (not finite, or outside the
+// colour image, as for pixels without a depth reading) gets A = 0.
+std::vector<uint8_t> KinectV2ColourOnDepth(std::span<const float> points,
+                                           std::span<const uint8_t> colour_rgba,
+                                           uint32_t colour_width,
+                                           uint32_t colour_height);
+
 }  // namespace motion
 }  // namespace hid
 }  // namespace xe

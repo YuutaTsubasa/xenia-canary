@@ -8,6 +8,7 @@
  */
 
 #include <cmath>
+#include <limits>
 #include <vector>
 
 #include "xenia/hid/motion/kinect_v2_frames.h"
@@ -96,6 +97,43 @@ TEST_CASE("An empty Kinect v2 table is not taken as real",
   table[0] = std::nanf("");
   REQUIRE_FALSE(KinectV2TableLooksValid(table, kV2DepthWidth, kV2DepthHeight));
   REQUIRE_FALSE(KinectV2TableLooksValid(table, 10, 10));
+}
+
+TEST_CASE("Each depth pixel takes the colour where the mapping points",
+          "[motion][kinect_v2]") {
+  // A 4x2 colour image: pixel (x, y) has red x * 10, green y * 10.
+  std::vector<uint8_t> colour(4 * 2 * 4);
+  for (uint32_t y = 0; y < 2; ++y) {
+    for (uint32_t x = 0; x < 4; ++x) {
+      uint8_t* p = &colour[(y * 4 + x) * 4];
+      p[0] = uint8_t(x * 10);
+      p[1] = uint8_t(y * 10);
+      p[2] = 7;
+      p[3] = 0;  // the SDK's alpha is not used
+    }
+  }
+  const float inf = std::numeric_limits<float>::infinity();
+  // Four depth pixels: one on (3, 1), one rounding to (1, 0), one with no
+  // place (no depth reading), one outside the colour image.
+  std::vector<float> points = {3.0f, 1.0f, 0.6f, -0.4f, -inf, -inf,
+                               4.0f, 0.0f};
+  auto rgba = KinectV2ColourOnDepth(points, colour, 4, 2);
+  REQUIRE(rgba.size() == 16);
+  REQUIRE(rgba[0] == 30);
+  REQUIRE(rgba[1] == 10);
+  REQUIRE(rgba[2] == 7);
+  REQUIRE(rgba[3] == 255);
+  REQUIRE(rgba[4] == 10);
+  REQUIRE(rgba[5] == 0);
+  REQUIRE(rgba[7] == 255);
+  REQUIRE(rgba[11] == 0);
+  REQUIRE(rgba[15] == 0);
+
+  // A colour image of the wrong size gives no colour at all.
+  auto none = KinectV2ColourOnDepth(points, colour, 5, 2);
+  for (size_t i = 3; i < none.size(); i += 4) {
+    REQUIRE(none[i] == 0);
+  }
 }
 
 }  // namespace xe::hid::motion::test
