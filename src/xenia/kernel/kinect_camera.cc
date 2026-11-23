@@ -485,19 +485,29 @@ bool KinectCamera::FillDepthRead(uint32_t block) {
   return true;
 }
 
-// Writes a colour frame into a read's buffer and returns its length. The
-// colour format (Bayer or YUV, docs/kinect-pscam.md section 11) is still not
-// known, so the picture is plain grey: 0x80 is a middle grey in either. What
-// the title needs from it for now is that it comes, with the frame number
-// the depth frame has and, in the byte at +44, the number of the colour
-// settings in force (CompleteSettings), so the identity code finds a frame
-// taken with its own settings.
+// Writes a colour frame into a read's buffer and returns its length. When
+// the picture the title last got has colour (the device saw it), it is that
+// picture's colour as the v1's raw Bayer frame: the title's identity code
+// looks for the player's face in it (docs/kinect-pscam.md section 14.5).
+// Otherwise it is plain grey (0x80, a middle grey). Either way it carries
+// the frame number of the depth frame and, in the byte at +44, the number
+// of the colour settings in force (CompleteSettings), so the identity code
+// finds a frame taken with its own settings.
 uint32_t KinectCamera::FillColourRead(uint32_t block) {
   auto memory = kernel_state_->memory();
   auto* words = memory->TranslateVirtual<xe::be<uint32_t>*>(block);
   const uint32_t length = words[kReadLength];
-  std::memset(memory->TranslateVirtual<uint8_t*>(words[kReadBuffer]), 0x80,
-              length);
+  std::span<uint8_t> buffer(
+      memory->TranslateVirtual<uint8_t*>(words[kReadBuffer]), length);
+  const bool coloured =
+      title_depth_ && hid::motion::EncodeV1ColourFrame(*title_depth_, buffer);
+  if (!coloured) {
+    std::memset(buffer.data(), hid::motion::kV1ColourGrey, buffer.size());
+  }
+  if (coloured && !colour_picture_logged_) {
+    colour_picture_logged_ = true;
+    XELOGI("Kinect camera: colour frames now show the device's picture");
+  }
   if (uint32_t info = words[kReadInfo]) {
     *memory->TranslateVirtual<xe::be<uint32_t>*>(info) = frame_number_;
   }
@@ -507,8 +517,8 @@ uint32_t KinectCamera::FillColourRead(uint32_t block) {
     colour_frame_logged_ = true;
     XELOGI(
         "Kinect camera: first colour frame handed to the title ({} bytes, "
-        "grey, settings {})",
-        length, settings_number_);
+        "{}, settings {})",
+        length, coloured ? "the device's picture" : "grey", settings_number_);
   }
   return length;
 }

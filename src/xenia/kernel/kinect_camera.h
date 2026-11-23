@@ -117,6 +117,7 @@ class KinectCamera {
   bool colour_read_logged_ = false;
   bool depth_frame_logged_ = false;
   bool colour_frame_logged_ = false;
+  bool colour_picture_logged_ = false;
   bool depth_failure_logged_ = false;
   bool stall_logged_ = false;
   bool cancel_logged_ = false;
