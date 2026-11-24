@@ -274,13 +274,22 @@ X_HRESULT XamApp::DispatchMessageSync(uint32_t message, uint32_t buffer_ptr,
   }
   if (seen <= 3) {
     std::string words, names;
+    // True when every page from address to address + 48 is committed and
+    // readable.
+    auto readable = [this](uint32_t address) {
+      auto heap = memory_->LookupHeap(address);
+      return heap && heap->QueryRangeAccess(address, address + 48) !=
+                         xe::memory::PageAccess::kNoAccess;
+    };
     if (buffer_ptr) {
       for (uint32_t i = 0; i < 8; ++i) {
         uint32_t word = xe::load_and_swap<uint32_t>(buffer + i * 4);
         words += fmt::format("{}{:08X}", i ? " " : "", word);
         // A word in the title's image may be a name, such as the resource or
-        // task the message is about.
-        if (word >= 0x82000000 && word < 0x90000000) {
+        // task the message is about. Only a word whose pages are mapped can
+        // be read: Fruit Ninja Kinect sends a word in that range that isn't,
+        // and reading it crashed Xenia.
+        if (word >= 0x82000000 && word < 0x90000000 && readable(word)) {
           auto text = memory_->TranslateVirtual<const char*>(word);
           std::string name;
           while (name.size() < 48 && text[name.size()] >= 0x20 &&
