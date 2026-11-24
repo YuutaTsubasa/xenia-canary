@@ -11,6 +11,7 @@
 #define XENIA_KERNEL_XAM_APPS_XAM_APP_H_
 
 #include <atomic>
+#include <mutex>
 
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/xam/app_manager.h"
@@ -40,12 +41,22 @@ class XamApp : public App {
   // identity callback that the skeleton in this 0x2B002 frame is a
   // signed-in player.
   void AnnounceIdentity(const uint8_t* frame);
+  // Logs whether the title's skeleton tracker sees anyone in 0x2B002 frames.
+  void ReportTracking(const uint8_t* frame);
 
   // The callback the title registered with 0x2C009, the guest block handed
   // to it, and the tracking id of the skeleton last announced.
   std::atomic<uint32_t> identity_callback_ = 0;
   uint32_t identity_block_ = 0;
   uint32_t identified_tracking_id_ = 0;
+
+  // ReportTracking's counts.
+  std::mutex tracking_mutex_;
+  bool tracking_seen_ = false;
+  uint32_t tracking_frames_total_ = 0;
+  uint32_t tracking_frames_ = 0;
+  uint32_t tracking_frames_with_someone_ = 0;
+  uint32_t tracking_reports_ = 0;
 };
 
 }  // namespace apps

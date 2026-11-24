@@ -189,6 +189,7 @@ X_HRESULT XamApp::DispatchMessageSync(uint32_t message, uint32_t buffer_ptr,
             float(floats[6]), float(floats[7]));
       }
       if (buffer_ptr) {
+        ReportTracking(buffer);
         AnnounceIdentity(buffer);
       }
       return X_E_SUCCESS;
@@ -315,6 +316,47 @@ X_HRESULT XamApp::DispatchMessageSync(uint32_t message, uint32_t buffer_ptr,
         seen == 3 ? " (not logged again)" : "");
   }
   return X_E_FAIL;
+}
+
+// Says in the log whether the title's own skeleton tracker sees anyone, so a
+// tester's log shows why nobody was announced: the first frame with a
+// tracked skeleton, and every 300 frames (about 10 s) how many had one, the
+// first 12 times.
+void XamApp::ReportTracking(const uint8_t* frame) {
+  constexpr uint32_t kSkeletons = 6;
+  constexpr uint32_t kSkeletonBytes = 448;
+  constexpr uint32_t kSkeletonTracked = 2;
+  constexpr uint32_t kFramesPerReport = 300;
+  constexpr uint32_t kReports = 12;
+  uint32_t tracked = 0;
+  for (uint32_t i = 0; i < kSkeletons; ++i) {
+    if (xe::load_and_swap<uint32_t>(frame + 48 + i * kSkeletonBytes) ==
+        kSkeletonTracked) {
+      ++tracked;
+    }
+  }
+  std::lock_guard<std::mutex> lock(tracking_mutex_);
+  if (tracked && !tracking_seen_) {
+    tracking_seen_ = true;
+    XELOGI("XamApp: the title's skeleton tracker found {} player(s), {} "
+           "frames in",
+           tracked, tracking_frames_total_);
+  }
+  ++tracking_frames_total_;
+  ++tracking_frames_;
+  tracking_frames_with_someone_ += tracked ? 1 : 0;
+  if (tracking_frames_ == kFramesPerReport) {
+    if (tracking_reports_ < kReports) {
+      ++tracking_reports_;
+      XELOGI(
+          "XamApp: skeleton report {}/{}: the title tracked someone in {} of "
+          "the last {} frames",
+          tracking_reports_, kReports, tracking_frames_with_someone_,
+          kFramesPerReport);
+    }
+    tracking_frames_ = 0;
+    tracking_frames_with_someone_ = 0;
+  }
 }
 
 // With motion_sign_in_first_user, says that the first tracked skeleton in a
